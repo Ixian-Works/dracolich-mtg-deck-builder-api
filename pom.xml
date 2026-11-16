@@ -27,14 +27,14 @@
     <distributionManagement>
         <repository>
             <id>github</id>
-            <url>https://maven.pkg.github.com/laasilva/dracolich-mtg-deck-builder-api</url>
+            <url>https://maven.pkg.github.com/ixian-works/dracolich-mtg-deck-builder-api</url>
         </repository>
     </distributionManagement>
 
     <repositories>
         <repository>
             <id>github</id>
-            <url>https://maven.pkg.github.com/laasilva/dracolich-mtg-deck-builder-api</url>
+            <url>https://maven.pkg.github.com/ixian-works/dracolich-mtg-deck-builder-api</url>
         </repository>
     </repositories>
 
