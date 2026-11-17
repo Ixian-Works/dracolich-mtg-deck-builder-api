@@ -24,4 +24,10 @@ public interface DeckCustomRepository {
     Mono<Page<DeckEntity>> findPublicDecksByUserId(String userId, Format format, int page, int size);
 
     Mono<Page<DeckEntity>> findPublicDecksByIds(Set<String> deckIds, int page, int size);
+
+    /**
+     * Moves the deck's favorites counter by {@code delta} with a single {@code $inc}, touching no other
+     * field. A decrement never takes the counter below zero. Completes empty when the deck doesn't exist.
+     */
+    Mono<Void> changeFavoritesCount(String deckId, int delta);
 }
