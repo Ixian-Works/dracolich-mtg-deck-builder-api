@@ -32,8 +32,8 @@ public final class ErrorUtil {
     }
 
     public static ResponseException invalidDeckChange(String reason) {
-        var error = new ApiError(ErrorCodes.DMD043);
-        return new ResponseException(ErrorCodes.DMD043.format(reason),
+        var error = new ApiError(ErrorCodes.DMD044);
+        return new ResponseException(ErrorCodes.DMD044.format(reason),
                 List.of(error), HttpStatus.BAD_REQUEST);
     }
 

@@ -77,7 +77,7 @@ Base path: `/dracolich/mtg-deck-builder/api/v0/`
 | GET | `/{id}/validate` | NO/OWNED | Format rules validation against the saved deck |
 | GET | `/{id}/export` | NO/OWNED | Returns the deck as Scryfall-compatible text (`text/plain`) |
 | PUT | `/{id}` | OWNED | Update deck metadata (name, description, format, status, visibility) and the commanders (`commander_ids`: one or two library ids; `[]` removes them). Partial: only non-null fields applied. Anon cannot promote off PRIVATE (401). Bumps `audit.lastModified`. |
-| PUT | `/{id}/cards/{cardId}` | OWNED | Change the entry in the `?category=` board (default MAINBOARD): `count` (>= 1) sets the copies, `card_category` moves it to another board, merging with an entry already there. One of the two is required (400, DMD043). 404 if (cardId, category) not in deck. Bumps `audit.lastModified`. |
+| PUT | `/{id}/cards/{cardId}` | OWNED | Change the entry in the `?category=` board (default MAINBOARD): `count` (>= 1) sets the copies, `card_category` moves it to another board, merging with an entry already there. One of the two is required (400, DMD044). 404 if (cardId, category) not in deck. Bumps `audit.lastModified`. |
 | DELETE | `/{id}` | YES | Delete deck (USER only). Anon decks expire via TTL. |
 | DELETE | `/{id}/cards/{cardId}` | OWNED | Remove the card's entry from the `?category=` board (default MAINBOARD); other boards keep theirs. 404 if that board doesn't hold it. Bumps `audit.lastModified`, invalidates AI cache. |
 
@@ -270,7 +270,7 @@ Shared `paginated(criteria, page, size, sort)` helper does the count + find + `P
 | DMD034 | User not authorized to perform this action |
 | DMD035 | Deck import failed (per-line errors in response, returns 422) |
 | DMD036 | Deck already claimed (returns 409) |
-| DMD043 | Invalid deck change, such as a count below 1 or more than two commanders (returns 400) |
+| DMD044 | Invalid deck change, such as a count below 1 or more than two commanders (returns 400) |
 | DMD040 | ai-api rejected the request (422 and 429 pass through; any other 4xx returns 502) |
 | DMD041 | ai-api unavailable (returns 503) |
 | DMD042 | The deck has no cards to send to the AI (returns 422) |

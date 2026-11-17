@@ -101,9 +101,9 @@ class DeckCardsTest {
 
     @Test
     void aCountBelowOneIsRejected() {
-        assertRejected(() -> DeckCards.add(deck(), card("bolt", MAINBOARD, 0)), HttpStatus.BAD_REQUEST, "DMD043");
+        assertRejected(() -> DeckCards.add(deck(), card("bolt", MAINBOARD, 0)), HttpStatus.BAD_REQUEST, "DMD044");
         assertRejected(() -> DeckCards.update(deck(card("bolt", MAINBOARD, 1)), "bolt", MAINBOARD, -1, null),
-                HttpStatus.BAD_REQUEST, "DMD043");
+                HttpStatus.BAD_REQUEST, "DMD044");
     }
 
     @Test
@@ -143,7 +143,7 @@ class DeckCardsTest {
     @Test
     void anUpdateWithNothingToChangeIsRejected() {
         assertRejected(() -> DeckCards.update(deck(card("bolt", MAINBOARD, 1)), "bolt", MAINBOARD, null, null),
-                HttpStatus.BAD_REQUEST, "DMD043");
+                HttpStatus.BAD_REQUEST, "DMD044");
     }
 
     @Test
