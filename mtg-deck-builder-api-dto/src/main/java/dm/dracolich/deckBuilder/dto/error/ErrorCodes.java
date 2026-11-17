@@ -11,7 +11,10 @@ public enum ErrorCodes implements ErrorCode {
     DMD033("DMD033", "%s: %s not found: %s"),
     DMD034("DMD034", "User not authorized to perform this action."),
     DMD035("DMD035", "Deck import failed: %s"),
-    DMD036("DMD036", "Deck %s has already been claimed");
+    DMD036("DMD036", "Deck %s has already been claimed"),
+    DMD040("DMD040", "AI request rejected: %s"),
+    DMD041("DMD041", "AI API unavailable"),
+    DMD042("DMD042", "Deck %s has no cards yet, so there is nothing for the AI to read");
 
     private final String code;
     private final String message;

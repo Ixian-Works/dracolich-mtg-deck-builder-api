@@ -7,7 +7,6 @@ import dm.dracolich.forge.error.ApiError;
 import dm.dracolich.forge.response.DmdResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -18,9 +17,8 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 
-import static dm.dracolich.deckBuilder.integration.helpers.ErrorUtil.libraryClientError;
-import static dm.dracolich.deckBuilder.integration.helpers.ErrorUtil.libraryNotFound;
-import static dm.dracolich.deckBuilder.integration.helpers.ErrorUtil.libraryUnavailable;
+import static dm.dracolich.deckBuilder.integration.helpers.ErrorUtil.aiRejected;
+import static dm.dracolich.deckBuilder.integration.helpers.ErrorUtil.aiUnavailable;
 
 @Component
 @RequiredArgsConstructor
@@ -31,7 +29,8 @@ public class DracolichAiClient {
     private static final String PATH_CHAT = "/agent/chat";
 
     /**
-     * Creates a new ai-api session for the given context (BUILD or ANALYSIS).
+     * Creates a new ai-api session. An ANALYSIS session needs a non-empty deck list; a BUILD
+     * session needs a commander name and keeps nothing else of the deck.
      */
     public Mono<SessionDto> createSession(SessionCreateRequest request) {
         return aiApiWebClient.post()
@@ -76,25 +75,29 @@ public class DracolichAiClient {
     }
 
     private Mono<? extends Throwable> handleAiClientError(ClientResponse response) {
-        return response.bodyToMono(new ParameterizedTypeReference<DmdResponse<Object>>() {})
-                .defaultIfEmpty(new DmdResponse<>())
-                .map(dmd -> {
-                    String upstreamMessage = dmd.getMessage() != null
-                            ? dmd.getMessage()
-                            : "AI call failed";
-                    List<ApiError> upstreamErrors = dmd.getErrors() != null
-                            ? dmd.getErrors()
-                            : List.of();
-
-                    if (response.statusCode() == HttpStatus.NOT_FOUND) {
-                        return libraryNotFound(upstreamMessage, upstreamErrors);
-                    }
-                    return libraryClientError(upstreamMessage, upstreamErrors);
-                });
+        return upstreamEnvelope(response)
+                .map(dmd -> aiRejected(
+                        response.statusCode(),
+                        dmd.getMessage() != null ? dmd.getMessage() : "AI call failed",
+                        upstreamErrors(dmd)));
     }
 
     private Mono<? extends Throwable> handleAiServerError(ClientResponse response) {
-        return response.releaseBody()
-                .then(Mono.just(libraryUnavailable()));
+        return upstreamEnvelope(response)
+                .map(dmd -> aiUnavailable(upstreamErrors(dmd)));
+    }
+
+    /**
+     * ai-api answers a failure with forge's envelope. Whatever stands in front of it may not: a
+     * proxy's 502 is an HTML page. A body that isn't an envelope reads as an empty one.
+     */
+    private static Mono<DmdResponse<Object>> upstreamEnvelope(ClientResponse response) {
+        return response.bodyToMono(new ParameterizedTypeReference<DmdResponse<Object>>() { })
+                .onErrorResume(unreadable -> Mono.empty())
+                .defaultIfEmpty(new DmdResponse<>());
+    }
+
+    private static List<ApiError> upstreamErrors(DmdResponse<Object> dmd) {
+        return dmd.getErrors() != null ? dmd.getErrors() : List.of();
     }
 }

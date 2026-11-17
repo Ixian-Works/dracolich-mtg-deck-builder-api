@@ -16,19 +16,20 @@ import dm.dracolich.deckBuilder.dto.DeckStatsDto;
 import dm.dracolich.deckBuilder.integration.DracolichAiClient;
 import dm.dracolich.forge.security.Principal;
 import dm.dracolich.forge.security.ReactiveSecurityContextUtil;
-import dm.dracolich.mtgLibrary.dto.enums.Format;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
+import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.emptyDeck;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.notFound;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.unauthorized;
 
@@ -52,7 +53,7 @@ public class DeckAiServiceImpl implements DeckAiService {
 
     @Override
     public Mono<DeckAiResultDto> suggestForDeck(String deckId) {
-        return runCachedDeckOperation(deckId, SessionType.BUILD, SUGGEST_PROMPT,
+        return runCachedDeckOperation(deckId, "suggest", SUGGEST_PROMPT,
                 AiCacheEntity::getSuggestResult,
                 AiCacheEntity::getSuggestAt,
                 (cache, result) -> {
@@ -63,7 +64,7 @@ public class DeckAiServiceImpl implements DeckAiService {
 
     @Override
     public Mono<DeckAiResultDto> analyzeDeck(String deckId) {
-        return runCachedDeckOperation(deckId, SessionType.ANALYSIS, ANALYZE_PROMPT,
+        return runCachedDeckOperation(deckId, "analyze", ANALYZE_PROMPT,
                 AiCacheEntity::getAnalyzeResult,
                 AiCacheEntity::getAnalyzeAt,
                 (cache, result) -> {
@@ -74,7 +75,7 @@ public class DeckAiServiceImpl implements DeckAiService {
 
     private Mono<DeckAiResultDto> runCachedDeckOperation(
             String deckId,
-            SessionType type,
+            String operation,
             String prompt,
             Function<AiCacheEntity, DeckAiResultDto> getCachedResult,
             Function<AiCacheEntity, Instant> getCachedAt,
@@ -88,11 +89,15 @@ public class DeckAiServiceImpl implements DeckAiService {
                             ? getCachedResult.apply(deck.getAiCache())
                             : null;
                     if (cached != null) {
-                        log.info("AI cache HIT for deck {} ({})", deck.getId(), type);
+                        log.info("AI cache HIT for deck {} ({})", deck.getId(), operation);
                         return Mono.just(cached);
                     }
-                    log.info("AI cache MISS for deck {} ({}), calling ai-api", deck.getId(), type);
-                    return streamAndAssemble(deck, type, prompt)
+                    if (commanders(deck).isEmpty() && cards(deck).isEmpty()) {
+                        // ai-api refuses a session with no cards, and has nothing to go on anyway.
+                        return Mono.error(emptyDeck(deck.getId()));
+                    }
+                    log.info("AI cache MISS for deck {} ({}), calling ai-api", deck.getId(), operation);
+                    return streamAndAssemble(deck, prompt)
                             .doOnNext(result -> persistCache(deck, result, writeCache));
                 });
     }
@@ -113,9 +118,9 @@ public class DeckAiServiceImpl implements DeckAiService {
      * <p>Stats are computed locally and prepended to the prompt — the AI never needs to call
      * a stats tool, which saves ~70 mtg-library-api round trips and ~2-5 seconds per call.</p>
      */
-    private Mono<DeckAiResultDto> streamAndAssemble(DeckEntity deck, SessionType type, String prompt) {
-        String fullPrompt = statsContext(deck) + "\n\n" + prompt;
-        return getOrCreateSession(deck, type)
+    private Mono<DeckAiResultDto> streamAndAssemble(DeckEntity deck, String prompt) {
+        String fullPrompt = deckContext(deck) + "\n\n" + prompt;
+        return getOrCreateSession(deck)
                 .flatMap(sessionId -> aiClient.chatStream(new ChatRequest(sessionId, fullPrompt))
                         .reduce(new StringBuilder(), StringBuilder::append)
                         .map(StringBuilder::toString)
@@ -134,13 +139,18 @@ public class DeckAiServiceImpl implements DeckAiService {
     }
 
     /**
-     * Builds a deterministic stats summary block that's prepended to AI prompts.
-     * Replaces the AI's old DeckAnalysisTool call by giving it the same data
-     * up-front — exact, instant, free of HTTP overhead.
+     * Builds a deterministic block of deck facts that's prepended to AI prompts: who leads the
+     * deck, then its statistics. The statistics replace the AI's old DeckAnalysisTool call by
+     * giving it the same data up-front — exact, instant, free of HTTP overhead.
      */
-    private static String statsContext(DeckEntity deck) {
+    private static String deckContext(DeckEntity deck) {
         DeckStatsDto stats = DeckStatsCalculator.compute(deck);
         StringBuilder sb = new StringBuilder("Pre-computed deck stats (use these instead of estimating):\n");
+        List<String> commanderNames = commanders(deck).stream().map(DeckCardEntity::getName).toList();
+        if (!commanderNames.isEmpty()) {
+            sb.append(commanderNames.size() == 1 ? "- Commander: " : "- Commanders: ")
+                    .append(String.join(" and ", commanderNames)).append("\n");
+        }
         sb.append("- Total cards: ").append(stats.cardCount()).append("\n");
         sb.append("- Land count: ").append(stats.landCount()).append("\n");
         if (stats.averageCmc() != null) {
@@ -172,26 +182,6 @@ public class DeckAiServiceImpl implements DeckAiService {
                 .subscribe();
     }
 
-    @Override
-    public Flux<String> suggestForCard(String cardId, Format format) {
-        return ReactiveSecurityContextUtil.getPrincipal()
-                .switchIfEmpty(Mono.error(unauthorized()))
-                .flatMap(principal -> {
-                    if (!principal.isUser()) return Mono.error(unauthorized());
-                    SessionCreateRequest req = new SessionCreateRequest(
-                            principal.id(),
-                            SessionType.ANALYSIS,
-                            format.name(),
-                            null,
-                            List.of(new DeckCardRequest(cardId, "MAINBOARD", 1, false)));
-                    return aiClient.createSession(req);
-                })
-                .flatMapMany(session -> aiClient.chatStream(new ChatRequest(
-                        session.getId(),
-                        "What cards synergize well with this card in " + format.name() +
-                                "? Suggest 3-5 specific cards using the suggestCards tool, with a reason for each.")));
-    }
-
     private Mono<DeckEntity> loadOwnedDeck(String deckId, Principal principal) {
         if (!principal.isUser()) {
             return Mono.error(unauthorized());
@@ -200,13 +190,18 @@ public class DeckAiServiceImpl implements DeckAiService {
                 .switchIfEmpty(Mono.error(notFound("ai_deck", "deck", deckId)));
     }
 
-    private Mono<String> getOrCreateSession(DeckEntity deck, SessionType type) {
+    /**
+     * Both operations use an ANALYSIS session. A BUILD session can't be opened without a
+     * commander, which no 60-card deck has, and ai-api keeps only the commander of one, so the
+     * model would never see the other cards.
+     */
+    private Mono<String> getOrCreateSession(DeckEntity deck) {
         if (deck.getAiSessionId() != null) {
             return Mono.just(deck.getAiSessionId());
         }
         SessionCreateRequest req = new SessionCreateRequest(
                 deck.getUserId(),
-                type,
+                SessionType.ANALYSIS,
                 deck.getFormat() != null ? deck.getFormat().name() : "COMMANDER",
                 commanderName(deck),
                 deckList(deck));
@@ -218,19 +213,40 @@ public class DeckAiServiceImpl implements DeckAiService {
     }
 
     private static String commanderName(DeckEntity deck) {
-        if (deck.getCommander() == null || deck.getCommander().isEmpty()) return null;
-        DeckCardEntity first = deck.getCommander().getFirst();
-        return first != null ? first.getName() : null;
+        List<DeckCardEntity> commanders = commanders(deck);
+        return commanders.isEmpty() ? null : commanders.getFirst().getName();
     }
 
+    /**
+     * The whole deck as ai-api takes it: the commanders first, then every other card. The
+     * commanders live in their own list on the deck, so they are added here, flagged. ai-api
+     * reads the commander and the colour identity of an ANALYSIS session from that flag alone.
+     */
     private static List<DeckCardRequest> deckList(DeckEntity deck) {
-        if (deck.getCards() == null) return List.of();
-        return deck.getCards().stream()
-                .map(c -> new DeckCardRequest(
-                        c.getName(),
-                        c.getCardCategory() != null ? c.getCardCategory().name() : "MAINBOARD",
-                        c.getCount() != null ? c.getCount() : 1,
-                        false))
-                .toList();
+        List<DeckCardRequest> list = new ArrayList<>();
+        for (DeckCardEntity commander : commanders(deck)) {
+            list.add(new DeckCardRequest(commander.getName(), "COMMANDER", 1, true));
+        }
+        for (DeckCardEntity card : cards(deck)) {
+            list.add(new DeckCardRequest(
+                    card.getName(),
+                    card.getCardCategory() != null ? card.getCardCategory().name() : "MAINBOARD",
+                    card.getCount() != null ? card.getCount() : 1,
+                    false));
+        }
+        return list;
+    }
+
+    private static List<DeckCardEntity> commanders(DeckEntity deck) {
+        return withoutNulls(deck.getCommander());
+    }
+
+    private static List<DeckCardEntity> cards(DeckEntity deck) {
+        return withoutNulls(deck.getCards());
+    }
+
+    private static List<DeckCardEntity> withoutNulls(List<DeckCardEntity> cards) {
+        if (cards == null) return List.of();
+        return cards.stream().filter(Objects::nonNull).toList();
     }
 }
