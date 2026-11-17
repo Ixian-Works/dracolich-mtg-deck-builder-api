@@ -77,7 +77,7 @@ public class DeckController {
         return service.addCardToDeck(id, request);
     }
 
-    @Operation(summary = "Update deck metadata", description = "Update deck metadata (name, description, format, status, visibility). Only non-null fields are applied. Anon owners cannot promote a deck off PRIVATE.")
+    @Operation(summary = "Update deck metadata", description = "Update deck metadata (name, description, format, status, visibility) and the commanders (commander_ids: one, or two for partners; an empty list removes them). Only non-null fields are applied. Anon owners cannot promote a deck off PRIVATE.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Deck updated successfully",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
@@ -96,7 +96,7 @@ public class DeckController {
         return service.updateDeck(id, request);
     }
 
-    @Operation(summary = "Update card quantity", description = "Update the count of an existing card in a deck. To remove the card, use DELETE. Disambiguates by ?category= query param (default MAINBOARD) when the same card exists in multiple boards.")
+    @Operation(summary = "Update a card in a deck", description = "Change the count of the card's entry in the ?category= board (default MAINBOARD), move it to the board in the body's card_category, or both. Moving into a board that already holds the card merges the two entries. To remove the card, use DELETE.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Card updated successfully",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
@@ -232,7 +232,7 @@ public class DeckController {
         return service.deleteDeckById(id);
     }
 
-    @Operation(summary = "Remove card from deck", description = "Remove a card from a existing deck")
+    @Operation(summary = "Remove card from deck", description = "Remove the card's entry from the ?category= board (default MAINBOARD). Entries of the same card in other boards stay. 404 if the board doesn't hold the card.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "204", description = "Card removed successfully"),
             @ApiResponse(responseCode = "400", description = "Validation error"),
@@ -242,8 +242,9 @@ public class DeckController {
     })
     @DeleteMapping(path = {"/{id}/cards/{cardId}"}, produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<?> deleteCardFromDeck(@PathVariable String id,
-                                 @PathVariable String cardId) {
-        return service.removeCardFromDeck(id, cardId);
+                                      @PathVariable String cardId,
+                                      @RequestParam(required = false) CardCategory category) {
+        return service.removeCardFromDeck(id, cardId, category);
     }
 
     @Operation(summary = "Validate an unsaved deck", description = "Returns full validation + stats for a deck submitted in the request body, without persisting. Useful for anon users wanting a quick analysis.")

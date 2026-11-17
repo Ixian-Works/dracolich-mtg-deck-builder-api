@@ -14,7 +14,8 @@ public enum ErrorCodes implements ErrorCode {
     DMD036("DMD036", "Deck %s has already been claimed"),
     DMD040("DMD040", "AI request rejected: %s"),
     DMD041("DMD041", "AI API unavailable"),
-    DMD042("DMD042", "Deck %s has no cards yet, so there is nothing for the AI to read");
+    DMD042("DMD042", "Deck %s has no cards yet, so there is nothing for the AI to read"),
+    DMD043("DMD043", "Invalid deck change: %s");
 
     private final String code;
     private final String message;

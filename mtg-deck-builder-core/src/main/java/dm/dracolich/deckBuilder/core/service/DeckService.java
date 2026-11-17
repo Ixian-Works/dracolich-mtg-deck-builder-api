@@ -24,7 +24,7 @@ public interface DeckService {
     Mono<DeckDto> copyDeck(String id);
     Mono<DeckDto> fetchDeckById(String id);
     Mono<Boolean> deleteDeckById(String id);
-    Mono<Boolean> removeCardFromDeck(String id, String cardId);
+    Mono<Boolean> removeCardFromDeck(String id, String cardId, CardCategory category);
     Mono<DeckDto> updateDeck(String id, UpdateDeckRequest request);
     Mono<DeckDto> updateCardInDeck(String id, String cardId, CardCategory category, UpdateCardRequest request);
     Mono<DeckDto> claimDeck(String id, String cookieAnonId);
