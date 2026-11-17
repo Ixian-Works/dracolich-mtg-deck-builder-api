@@ -221,7 +221,7 @@ public class DeckController {
 
     @Operation(summary = "Delete deck", description = "Delete deck from user's library")
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "204", description = "Deck deleted successfully"),
+            @ApiResponse(responseCode = "200", description = "Deck deleted. The payload is true"),
             @ApiResponse(responseCode = "400", description = "Validation error"),
             @ApiResponse(responseCode = "401", description = "Unauthorized"),
             @ApiResponse(responseCode = "404", description = "Deck not found"),
