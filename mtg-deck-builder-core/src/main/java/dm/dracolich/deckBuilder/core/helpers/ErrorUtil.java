@@ -37,6 +37,12 @@ public final class ErrorUtil {
                 List.of(error), HttpStatus.CONFLICT);
     }
 
+    public static ResponseException emptyDeck(String deckId) {
+        var error = new ApiError(ErrorCodes.DMD042);
+        return new ResponseException(ErrorCodes.DMD042.format(deckId),
+                List.of(error), HttpStatus.UNPROCESSABLE_CONTENT);
+    }
+
     public static ResponseException importFailed(List<ImportFailure> failures) {
         List<ApiError> errors = failures.stream()
                 .map(f -> new ApiError(

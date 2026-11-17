@@ -103,7 +103,11 @@ Path is `userId` rather than `username` for now — frontend already has userId 
 |--------|------|------|-------------|
 | POST | `/decks/{id}/suggest` | YES | AI card suggestions. Returns `DeckAiResultDto` JSON. Cached per-deck until modified. |
 | POST | `/decks/{id}/analyze` | YES | AI deck analysis with structured issues. Returns `DeckAiResultDto` JSON. Cached per-deck until modified. |
-| POST | `/cards/{cardId}/format/{format}/suggest` | YES | Stateless one-shot card synergy. SSE stream (still text). |
+
+Both refuse a deck with no commander and no cards (422, `DMD042`) without calling ai-api. A deck
+that is only its commander is accepted. The per-card endpoint
+`/cards/{cardId}/format/{format}/suggest` was removed: it sent the card id where ai-api expects a
+name, and no screen called it.
 
 ### Auth labels
 
@@ -216,9 +220,30 @@ Used by `/decks/{id}/stats`, `/decks/validate`, `/decks/import/validate`, AND th
 
 deck-builder-api owns the public AI endpoints; ai-api is treated as internal infrastructure and is
 never called by the frontend. Deck stats are computed here (`DeckStatsCalculator`) and injected into
-the prompt, which is why ai-api no longer has a `DeckAnalysisTool`. For the structured-response shape
-and tool architecture see `dracolich-ai-api/CLAUDE.md`; for the cross-repo picture see the workspace
-`CLAUDE.md` at `~/Dev/Dracolich/CLAUDE.md`.
+the prompt, which is why ai-api no longer has a `DeckAnalysisTool`. The same block names the
+commander or commanders.
+
+Suggest and analyze both open an `ANALYSIS` session, with the whole deck in `deck_list`: the
+commanders first, each with `is_commander=true`, then every other card. ai-api reads the commander
+and the colour identity from that flag. A `BUILD` session is never used: ai-api refuses one without
+a commander name, and keeps only the commander of one. ai-api takes the first flagged card as the
+commander, so for partners it knows one and the colour identity of that one.
+
+ai-api's failures have their own codes and are never reported as library errors
+(`DracolichAiClient`, `integration/helpers/ErrorUtil`):
+
+| ai-api answers | deck-builder answers | Errors |
+|---|---|---|
+| 422 (the model declined) | 422 | `DMD040`, then ai-api's own (`DMD037`) |
+| 429 (rate limited) | 429 | `DMD040`, then ai-api's own (`DMD038`) |
+| any other 4xx | 502, because the request was deck-builder's and not the caller's | `DMD040`, then ai-api's own |
+| 5xx, or a body that is not an envelope | 503 | `DMD041`, then ai-api's own if it sent any (`DMD039`) |
+
+`DeckAiServiceImplTest` covers all of this against `StubAiApi`, a stand-in for ai-api over real
+HTTP.
+
+For the structured-response shape and tool architecture see `dracolich-ai-api/CLAUDE.md`; for the
+cross-repo picture see the workspace `CLAUDE.md` at `~/Dev/Dracolich/CLAUDE.md`.
 
 ## Repository — `DeckCustomRepository` queries
 
@@ -240,15 +265,20 @@ Shared `paginated(criteria, page, size, sort)` helper does the count + find + `P
 |------|---------|
 | DMD030 | MTG Library lookup failed |
 | DMD031 | MTG Library request rejected |
-| DMD032 | MTG Library API unavailable (also reused for ai-api 5xx — name is misleading, plan to rename to `upstreamUnavailable`) |
+| DMD032 | MTG Library API unavailable |
 | DMD033 | Generic not-found (deck, card) |
 | DMD034 | User not authorized to perform this action |
 | DMD035 | Deck import failed (per-line errors in response, returns 422) |
 | DMD036 | Deck already claimed (returns 409) |
+| DMD040 | ai-api rejected the request (422 and 429 pass through; any other 4xx returns 502) |
+| DMD041 | ai-api unavailable (returns 503) |
+| DMD042 | The deck has no cards to send to the AI (returns 422) |
+
+DMD037 to DMD039 belong to ai-api.
 
 Two `ErrorUtil` classes split by module concerns:
-- `core/helpers/ErrorUtil` — `notFound`, `unauthorized`, `internalServerError`, `importFailed`, `deckAlreadyClaimed` + `ImportFailure` record
-- `integration/helpers/ErrorUtil` — `libraryNotFound`, `libraryClientError`, `libraryUnavailable`
+- `core/helpers/ErrorUtil` — `notFound`, `unauthorized`, `internalServerError`, `importFailed`, `deckAlreadyClaimed`, `emptyDeck` + `ImportFailure` record
+- `integration/helpers/ErrorUtil` — `libraryNotFound`, `libraryClientError`, `libraryUnavailable`, `aiRejected`, `aiUnavailable`
 
 ## Required Properties
 
@@ -309,7 +339,6 @@ All originally-scoped Phase 3 endpoints have shipped. Outstanding work is harden
 |------|----------|-------|
 | Username-based public profile URLs | LOW | Currently `/users/{userId}/...`. Add when public-profile UI lands. |
 | Test coverage | MEDIUM | 0% — pure-logic classes (`FormatRuleSet` impls, `DeckStatsCalculator`, `DeckTextParser`) are highest-value targets |
-| Rename `libraryUnavailable` → `upstreamUnavailable` | LOW | Cosmetic |
 | `application-prod.yml` | DEFERRED | Helm/ArgoCD phase (Azure AKS) |
 | Rate limiting | DEFERRED | Spring Cloud Gateway phase |
 | Banned-list validation | DEFERRED | Would need per-card legality lookups |
