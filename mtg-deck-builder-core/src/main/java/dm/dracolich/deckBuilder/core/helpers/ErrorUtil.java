@@ -31,6 +31,12 @@ public final class ErrorUtil {
                 List.of(error), HttpStatus.UNAUTHORIZED);
     }
 
+    public static ResponseException invalidDeckChange(String reason) {
+        var error = new ApiError(ErrorCodes.DMD044);
+        return new ResponseException(ErrorCodes.DMD044.format(reason),
+                List.of(error), HttpStatus.BAD_REQUEST);
+    }
+
     public static ResponseException deckAlreadyClaimed(String deckId) {
         var error = new ApiError(ErrorCodes.DMD036);
         return new ResponseException(ErrorCodes.DMD036.format(deckId),

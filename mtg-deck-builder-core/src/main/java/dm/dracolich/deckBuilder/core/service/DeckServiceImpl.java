@@ -1,5 +1,6 @@
 package dm.dracolich.deckBuilder.core.service;
 
+import dm.dracolich.deckBuilder.core.cards.DeckCards;
 import dm.dracolich.deckBuilder.core.helpers.ErrorUtil;
 import dm.dracolich.deckBuilder.core.mapper.DeckMapper;
 import dm.dracolich.deckBuilder.core.stats.DeckStatsCalculator;
@@ -52,6 +53,7 @@ import java.util.Set;
 
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.deckAlreadyClaimed;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.importFailed;
+import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.invalidDeckChange;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.notFound;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.unauthorized;
 
@@ -107,10 +109,10 @@ public class DeckServiceImpl implements DeckService {
     }
 
     @Override
-    public Mono<Boolean> removeCardFromDeck(String id, String cardId) {
+    public Mono<Boolean> removeCardFromDeck(String id, String cardId, CardCategory category) {
         return ReactiveSecurityContextUtil.getPrincipal()
                 .switchIfEmpty(Mono.error(unauthorized()))
-                .flatMap(principal -> buildRemoveCardFromDeck(principal, id, cardId))
+                .flatMap(principal -> buildRemoveCardFromDeck(principal, id, cardId, category))
                 .flatMap(repo::save)
             .thenReturn(true);
     }
@@ -270,14 +272,14 @@ public class DeckServiceImpl implements DeckService {
                                 .build())
                         .name(source.getName())
                         .description(source.getDescription())
-                        .colors(source.getColors())
                         .format(source.getFormat())
                         .status(source.getStatus())
                         .commander(source.getCommander())
                         .cards(source.getCards())
                         .visibility(Visibility.PRIVATE)
                         .favoritesCount(0L)
-                    .build());
+                    .build())
+                .doOnNext(DeckCards::refreshColors);
     }
 
     private Mono<DeckEntity> buildFetchDeckByIdAndUserId(Principal principal, String id) {
@@ -308,15 +310,31 @@ public class DeckServiceImpl implements DeckService {
                             .description(request.description())
                             .format(request.format())
                             .status(request.deckStatus() != null ? request.deckStatus() : DeckStatus.DRAFT)
-                            .commander(touple.getT1())
-                            .cards(touple.getT2())
+                            .commander(new ArrayList<>(touple.getT1()))
+                            .cards(new ArrayList<>())
                             .visibility(request.visibility() != null ? request.visibility() : Visibility.PRIVATE);
 
-                    return switch (principal.type()) {
+                    DeckEntity deck = switch (principal.type()) {
                         case USER -> builder.userId(principal.id()).build();
                         case ANON -> builder.anonId(principal.id()).visibility(Visibility.PRIVATE).build();
                     };
+                    touple.getT2().forEach(card -> DeckCards.add(deck, card));
+                    DeckCards.refreshColors(deck);
+                    return deck;
                 });
+    }
+
+    /** One commander, or two for partners. Each is fetched from the library and snapshotted. */
+    private Mono<List<DeckCardEntity>> resolveCommanders(List<String> commanderIds) {
+        if (commanderIds.size() > 2) {
+            return Mono.error(invalidDeckChange("a deck has at most two commanders"));
+        }
+        return Flux.fromIterable(commanderIds)
+                .concatMap(cardId -> libraryFeignClient.fetchCardById(cardId)
+                        .switchIfEmpty(Mono.error(notFound("update_deck", "commander", cardId)))
+                        .map(card -> snapshot(card, 1, null)))
+                .collectList()
+                .map(ArrayList::new);
     }
 
     private Mono<DeckCardEntity> buildDeckCard(CardRequest card) {
@@ -332,6 +350,7 @@ public class DeckServiceImpl implements DeckService {
                 .manaCost(libraryCard.getDefaultFace().getGameplayProperty().getManaCost())
                 .cmc(libraryCard.getDefaultFace().getGameplayProperty().getManaValue())
                 .colors(libraryCard.getDefaultFace().getGameplayProperty().getColors())
+                .colorIdentity(libraryCard.getDefaultFace().getGameplayProperty().getColorIdentity())
                 .typeLine(libraryCard.getDefaultFace().getFullType())
                 .imageUri(libraryCard.getDefaultArt() != null
                         ? libraryCard.getDefaultArt().getImageUris() : null)
@@ -344,7 +363,7 @@ public class DeckServiceImpl implements DeckService {
         return loadOwnedDeckOrFail(id, principal, "add_card_to_deck")
                 .flatMap(deckEntity -> buildDeckCard(request)
                         .map(card -> {
-                            deckEntity.getCards().add(card);
+                            DeckCards.add(deckEntity, card);
                             return touchLastModified(deckEntity);
                         }));
     }
@@ -367,10 +386,12 @@ public class DeckServiceImpl implements DeckService {
                 .thenReturn(true);
     }
 
-    private Mono<DeckEntity> buildRemoveCardFromDeck(Principal principal, String id, String cardId) {
+    private Mono<DeckEntity> buildRemoveCardFromDeck(Principal principal, String id, String cardId,
+                                                     CardCategory category) {
+        CardCategory board = category != null ? category : CardCategory.MAINBOARD;
         return loadOwnedDeckOrFail(id, principal, "remove_card_from_deck")
                 .map(deckEntity -> {
-                    deckEntity.getCards().removeIf(card -> card.getCardId().equals(cardId));
+                    DeckCards.remove(deckEntity, cardId, board);
                     return touchLastModified(deckEntity);
                 });
     }
@@ -387,7 +408,14 @@ public class DeckServiceImpl implements DeckService {
                     if (request.format() != null) deck.setFormat(request.format());
                     if (request.deckStatus() != null) deck.setStatus(request.deckStatus());
                     if (request.visibility() != null) deck.setVisibility(request.visibility());
-                    return Mono.just(touchLastModified(deck));
+                    if (request.commanderIds() == null) {
+                        return Mono.just(touchLastModified(deck));
+                    }
+                    return resolveCommanders(request.commanderIds())
+                            .map(commanders -> {
+                                deck.setCommander(commanders);
+                                return touchLastModified(deck);
+                            });
                 });
     }
 
@@ -395,16 +423,9 @@ public class DeckServiceImpl implements DeckService {
                                                    CardCategory category, UpdateCardRequest request) {
         CardCategory targetCategory = category != null ? category : CardCategory.MAINBOARD;
         return loadOwnedDeckOrFail(id, principal, "update_card_in_deck")
-                .flatMap(deck -> {
-                    Optional<DeckCardEntity> match = deck.getCards().stream()
-                            .filter(c -> c.getCardId().equals(cardId)
-                                    && c.getCardCategory() == targetCategory)
-                            .findFirst();
-                    if (match.isEmpty()) {
-                        return Mono.error(notFound("update_card_in_deck", "card", cardId));
-                    }
-                    match.get().setCount(request.count());
-                    return Mono.just(touchLastModified(deck));
+                .map(deck -> {
+                    DeckCards.update(deck, cardId, targetCategory, request.count(), request.cardCategory());
+                    return touchLastModified(deck);
                 });
     }
 
@@ -447,6 +468,7 @@ public class DeckServiceImpl implements DeckService {
             deck.setAudit(AuditEntity.builder().createdAt(Instant.now()).build());
         }
         deck.getAudit().setLastModified(Instant.now());
+        DeckCards.refreshColors(deck);
         return deck;
     }
 
@@ -569,9 +591,11 @@ public class DeckServiceImpl implements DeckService {
                 .cards(resolved.cards())
                 .visibility(request.visibility() != null ? request.visibility() : Visibility.PRIVATE);
 
-        return switch (principal.type()) {
+        DeckEntity deck = switch (principal.type()) {
             case USER -> builder.userId(principal.id()).build();
             case ANON -> builder.anonId(principal.id()).visibility(Visibility.PRIVATE).build();
         };
+        DeckCards.refreshColors(deck);
+        return deck;
     }
 }

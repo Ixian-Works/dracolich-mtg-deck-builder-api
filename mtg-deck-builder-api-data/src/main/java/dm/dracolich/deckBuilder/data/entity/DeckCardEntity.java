@@ -23,6 +23,8 @@ public class DeckCardEntity {
     private String manaCost;
     private Double cmc; // mana curve
     private Set<Color> colors;
+    @Field("color_identity")
+    private Set<Color> colorIdentity; // null on entries saved before it was snapshotted
     @Field("type_line")
     private String typeLine;
     @Field("image_uri")

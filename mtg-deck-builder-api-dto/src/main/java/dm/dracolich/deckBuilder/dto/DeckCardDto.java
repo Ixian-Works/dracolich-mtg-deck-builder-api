@@ -25,6 +25,8 @@ public class DeckCardDto {
     private String manaCost;
     private Double cmc;
     private Set<Color> colors;
+    @JsonProperty("color_identity")
+    private Set<Color> colorIdentity;
     @JsonProperty("type_line")
     private String typeLine;
     @JsonProperty("image_uri")
