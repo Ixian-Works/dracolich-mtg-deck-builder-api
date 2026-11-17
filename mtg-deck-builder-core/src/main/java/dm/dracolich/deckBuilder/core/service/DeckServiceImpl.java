@@ -103,8 +103,7 @@ public class DeckServiceImpl implements DeckService {
     public Mono<Boolean> deleteDeckById(String id) {
         return ReactiveSecurityContextUtil.getPrincipal()
                 .switchIfEmpty(Mono.error(unauthorized()))
-                .map(principal -> buildDeleteDeckEntity(principal, id))
-            .thenReturn(true);
+                .flatMap(principal -> buildDeleteDeckEntity(principal, id));
     }
 
     @Override
@@ -350,6 +349,13 @@ public class DeckServiceImpl implements DeckService {
                         }));
     }
 
+    /**
+     * Deletes the deck if the signed-in user owns it. Anonymous decks can't be deleted.
+     *
+     * <p>References to the deck are left in place and drop out on read: favorites are
+     * read through {@code findPublicDecksByIds}, which skips ids that no longer exist,
+     * and the deck's ai-api session is left to that service.</p>
+     */
     private Mono<Boolean> buildDeleteDeckEntity(Principal principal, String id) {
         return loadOwnedDeckOrFail(id, principal, "delete_deck")
                 .flatMap(deck -> {
