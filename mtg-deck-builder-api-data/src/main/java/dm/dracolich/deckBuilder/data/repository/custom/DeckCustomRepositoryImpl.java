@@ -12,6 +12,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -19,7 +20,20 @@ import java.util.Set;
 
 @RequiredArgsConstructor
 public class DeckCustomRepositoryImpl implements DeckCustomRepository {
+    static final String FAVORITES_COUNT = "favorites_count";
+
     private final ReactiveMongoTemplate mongoTemplate;
+
+    @Override
+    public Mono<Void> changeFavoritesCount(String deckId, int delta) {
+        Criteria criteria = Criteria.where("_id").is(deckId);
+        if (delta < 0) {
+            // A missing or too-small counter doesn't match, so it can't go negative.
+            criteria.and(FAVORITES_COUNT).gte(-delta);
+        }
+        return mongoTemplate.updateFirst(Query.query(criteria), new Update().inc(FAVORITES_COUNT, delta), DeckEntity.class)
+                .then();
+    }
 
     @Override
     public Mono<Page<DeckEntity>> findUserDecksByFilters(String userId,
