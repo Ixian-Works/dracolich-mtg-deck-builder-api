@@ -37,6 +37,7 @@ import dm.dracolich.forge.security.OwnershipResolver;
 import dm.dracolich.forge.security.Principal;
 import dm.dracolich.forge.security.ReactiveSecurityContextUtil;
 import dm.dracolich.mtgLibrary.dto.CardDto;
+import dm.dracolich.mtgLibrary.dto.records.CardIdentifier;
 import dm.dracolich.mtgLibrary.dto.enums.Format;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -47,6 +48,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -237,19 +239,11 @@ public class DeckServiceImpl implements DeckService {
     }
 
     private Mono<DeckEntity> buildTransientDeck(ValidateDeckRequest request) {
-        Mono<List<DeckCardEntity>> commanderMono = request.commander() != null
-                ? buildDeckCard(request.commander()).map(List::of)
-                : Mono.just(List.of());
-
-        Mono<List<DeckCardEntity>> cardsMono = Flux.fromIterable(request.cards())
-                .flatMap(this::buildDeckCard)
-                .collectList();
-
-        return Mono.zip(commanderMono, cardsMono)
-                .map(tuple -> DeckEntity.builder()
+        return buildDeckCards(request.commander(), request.cards(), "validate_deck")
+                .map(resolved -> DeckEntity.builder()
                         .format(request.format())
-                        .commander(new ArrayList<>(tuple.getT1()))
-                        .cards(new ArrayList<>(tuple.getT2()))
+                        .commander(new ArrayList<>(resolved.commander()))
+                        .cards(new ArrayList<>(resolved.cards()))
                         .build());
     }
 
@@ -290,15 +284,9 @@ public class DeckServiceImpl implements DeckService {
     }
 
     private Mono<DeckEntity> buildCreateDeckEntity(Principal principal, CreateDeckRequest request) {
-        Mono<List<DeckCardEntity>> commanderMono = request.commander() != null ?
-                buildDeckCard(request.commander()).map(List::of) : Mono.just(List.of());
-
-        Mono<List<DeckCardEntity>> cardsMono = Flux.fromIterable(request.cards())
-                        .flatMap(this::buildDeckCard).collectList();
-
         Instant now = Instant.now();
 
-        return Mono.zip(commanderMono, cardsMono)
+        return buildDeckCards(request.commander(), request.cards(), "create_deck")
                 .map(touple -> {
                     var builder = DeckEntity.builder()
                             .copiedFromId(request.copiedFromId())
@@ -310,7 +298,7 @@ public class DeckServiceImpl implements DeckService {
                             .description(request.description())
                             .format(request.format())
                             .status(request.deckStatus() != null ? request.deckStatus() : DeckStatus.DRAFT)
-                            .commander(new ArrayList<>(touple.getT1()))
+                            .commander(new ArrayList<>(touple.commander()))
                             .cards(new ArrayList<>())
                             .visibility(request.visibility() != null ? request.visibility() : Visibility.PRIVATE);
 
@@ -318,7 +306,7 @@ public class DeckServiceImpl implements DeckService {
                         case USER -> builder.userId(principal.id()).build();
                         case ANON -> builder.anonId(principal.id()).visibility(Visibility.PRIVATE).build();
                     };
-                    touple.getT2().forEach(card -> DeckCards.add(deck, card));
+                    touple.cards().forEach(card -> DeckCards.add(deck, card));
                     DeckCards.refreshColors(deck);
                     return deck;
                 });
@@ -329,12 +317,46 @@ public class DeckServiceImpl implements DeckService {
         if (commanderIds.size() > 2) {
             return Mono.error(invalidDeckChange("a deck has at most two commanders"));
         }
-        return Flux.fromIterable(commanderIds)
-                .concatMap(cardId -> libraryFeignClient.fetchCardById(cardId)
-                        .switchIfEmpty(Mono.error(notFound("update_deck", "commander", cardId)))
-                        .map(card -> snapshot(card, 1, null)))
-                .collectList()
-                .map(ArrayList::new);
+        List<CardIdentifier> identifiers = commanderIds.stream().map(CardIdentifier::byId).toList();
+        return libraryFeignClient.resolveCards(identifiers)
+                .flatMap(cards -> {
+                    List<DeckCardEntity> commanders = new ArrayList<>();
+                    for (int i = 0; i < cards.size(); i++) {
+                        if (cards.get(i) == null) {
+                            return Mono.error(notFound("update_deck", "commander", commanderIds.get(i)));
+                        }
+                        commanders.add(snapshot(cards.get(i), 1, null));
+                    }
+                    return Mono.just(commanders);
+                });
+    }
+
+    private record ResolvedCards(List<DeckCardEntity> commander, List<DeckCardEntity> cards) {}
+
+    /**
+     * Snapshots of a deck's commander and cards, from one library call for all of them. A card the
+     * library doesn't have is a 404 naming it.
+     */
+    private Mono<ResolvedCards> buildDeckCards(CardRequest commander, Collection<CardRequest> cards, String context) {
+        List<CardRequest> requests = new ArrayList<>();
+        if (commander != null) requests.add(commander);
+        if (cards != null) requests.addAll(cards);
+        List<CardIdentifier> identifiers = requests.stream().map(r -> CardIdentifier.byId(r.cardId())).toList();
+        return libraryFeignClient.resolveCards(identifiers)
+                .flatMap(found -> {
+                    List<DeckCardEntity> snapshots = new ArrayList<>();
+                    for (int i = 0; i < requests.size(); i++) {
+                        CardRequest request = requests.get(i);
+                        if (found.get(i) == null) {
+                            return Mono.error(notFound(context, "card", request.cardId()));
+                        }
+                        snapshots.add(snapshot(found.get(i), request.count(), request.cardCategory()));
+                    }
+                    int split = commander != null ? 1 : 0;
+                    return Mono.just(new ResolvedCards(
+                            new ArrayList<>(snapshots.subList(0, split)),
+                            new ArrayList<>(snapshots.subList(split, snapshots.size()))));
+                });
     }
 
     private Mono<DeckCardEntity> buildDeckCard(CardRequest card) {
@@ -534,10 +556,8 @@ public class DeckServiceImpl implements DeckService {
             return Mono.error(importFailed(List.of(new ErrorUtil.ImportFailure(0, "", "Deck text is empty"))));
         }
 
-        return Flux.fromIterable(parsed)
-                .filter(ParsedLine::isValid)
-                .flatMap(this::resolveLine)
-                .collectList()
+        List<ParsedLine> valid = parsed.stream().filter(ParsedLine::isValid).toList();
+        return resolveLines(valid)
                 .flatMap(results -> {
                     List<ErrorUtil.ImportFailure> resolveFailures = results.stream()
                             .filter(r -> r.failure() != null)
@@ -566,16 +586,24 @@ public class DeckServiceImpl implements DeckService {
 
     private record LineResult(ParsedLine line, DeckCardEntity card, ErrorUtil.ImportFailure failure) {}
 
-    private Mono<LineResult> resolveLine(ParsedLine line) {
-        return libraryFeignClient.fetchCardByName(line.cardName())
-                .map(card -> new LineResult(line, snapshot(card, line.count(), line.section().toCategory()), null))
-                .onErrorResume(err -> {
-                    if (err instanceof ResponseException re && re.getHttpStatus() == HttpStatus.NOT_FOUND) {
-                        return Mono.just(new LineResult(line, null,
-                                new ErrorUtil.ImportFailure(line.lineNumber(), line.originalLine(),
-                                        "Card '" + line.cardName() + "' not found in library")));
+    /**
+     * Resolves every line's card name with one library call per hundred lines. A name the library
+     * doesn't have becomes a failure for that line, with the same message as before.
+     */
+    private Mono<List<LineResult>> resolveLines(List<ParsedLine> lines) {
+        List<CardIdentifier> identifiers = lines.stream().map(l -> CardIdentifier.byName(l.cardName().trim())).toList();
+        return libraryFeignClient.resolveCards(identifiers)
+                .map(cards -> {
+                    List<LineResult> results = new ArrayList<>(lines.size());
+                    for (int i = 0; i < lines.size(); i++) {
+                        ParsedLine line = lines.get(i);
+                        CardDto card = cards.get(i);
+                        results.add(card != null
+                                ? new LineResult(line, snapshot(card, line.count(), line.section().toCategory()), null)
+                                : new LineResult(line, null, new ErrorUtil.ImportFailure(line.lineNumber(),
+                                        line.originalLine(), "Card '" + line.cardName() + "' not found in library")));
                     }
-                    return Mono.error(err);
+                    return results;
                 });
     }
 

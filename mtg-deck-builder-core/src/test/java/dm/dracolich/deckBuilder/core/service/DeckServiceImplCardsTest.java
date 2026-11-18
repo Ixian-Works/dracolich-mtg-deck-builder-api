@@ -84,6 +84,18 @@ class DeckServiceImplCardsTest {
         card.setName(id);
         card.setDefaultFace(face);
         when(library.fetchCardById(id)).thenReturn(Mono.just(card));
+        libraryCards.put(id, card);
+    }
+
+    // The batch lookup answers from the same cards, aligned with the request, null where unknown.
+    private final java.util.Map<String, CardDto> libraryCards = new java.util.HashMap<>();
+
+    @BeforeEach
+    void batchLookup() {
+        when(library.resolveCards(org.mockito.ArgumentMatchers.anyList())).thenAnswer(i ->
+                Mono.just(i.<List<dm.dracolich.mtgLibrary.dto.records.CardIdentifier>>getArgument(0).stream()
+                        .map(identifier -> libraryCards.get(identifier.id()))
+                        .collect(java.util.stream.Collectors.toList())));
     }
 
     private static <T> Mono<T> asOwner(Mono<T> call) {
@@ -168,6 +180,7 @@ class DeckServiceImplCardsTest {
                 .verify();
 
         verify(library, never()).fetchCardById(anyString());
+        verify(library, never()).resolveCards(org.mockito.ArgumentMatchers.anyList());
         verify(repo, never()).save(any(DeckEntity.class));
     }
 }
