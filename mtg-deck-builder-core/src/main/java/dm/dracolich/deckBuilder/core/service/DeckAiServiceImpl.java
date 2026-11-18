@@ -26,7 +26,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.emptyDeck;
@@ -55,22 +54,14 @@ public class DeckAiServiceImpl implements DeckAiService {
     public Mono<DeckAiResultDto> suggestForDeck(String deckId) {
         return runCachedDeckOperation(deckId, "suggest", SUGGEST_PROMPT,
                 AiCacheEntity::getSuggestResult,
-                AiCacheEntity::getSuggestAt,
-                (cache, result) -> {
-                    cache.setSuggestResult(result);
-                    cache.setSuggestAt(Instant.now());
-                });
+                AiCacheEntity::getSuggestAt);
     }
 
     @Override
     public Mono<DeckAiResultDto> analyzeDeck(String deckId) {
         return runCachedDeckOperation(deckId, "analyze", ANALYZE_PROMPT,
                 AiCacheEntity::getAnalyzeResult,
-                AiCacheEntity::getAnalyzeAt,
-                (cache, result) -> {
-                    cache.setAnalyzeResult(result);
-                    cache.setAnalyzeAt(Instant.now());
-                });
+                AiCacheEntity::getAnalyzeAt);
     }
 
     private Mono<DeckAiResultDto> runCachedDeckOperation(
@@ -78,9 +69,11 @@ public class DeckAiServiceImpl implements DeckAiService {
             String operation,
             String prompt,
             Function<AiCacheEntity, DeckAiResultDto> getCachedResult,
-            Function<AiCacheEntity, Instant> getCachedAt,
-            BiConsumer<AiCacheEntity, DeckAiResultDto> writeCache) {
+            Function<AiCacheEntity, Instant> getCachedAt) {
 
+        // Taken before the deck is read: an edit made while the model works is later than this,
+        // so the cached answer it produces is already stale for the edited deck.
+        Instant startedAt = Instant.now();
         return ReactiveSecurityContextUtil.getPrincipal()
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> loadOwnedDeck(deckId, principal))
@@ -98,7 +91,8 @@ public class DeckAiServiceImpl implements DeckAiService {
                     }
                     log.info("AI cache MISS for deck {} ({}), calling ai-api", deck.getId(), operation);
                     return streamAndAssemble(deck, prompt)
-                            .doOnNext(result -> persistCache(deck, result, writeCache));
+                            .flatMap(result -> persistCache(deck.getId(), operation, result, startedAt)
+                                    .thenReturn(result));
                 });
     }
 
@@ -171,15 +165,18 @@ public class DeckAiServiceImpl implements DeckAiService {
         return sb.toString();
     }
 
-    private void persistCache(DeckEntity deck, DeckAiResultDto result, BiConsumer<AiCacheEntity, DeckAiResultDto> writeCache) {
-        if (result == null || result.getSummary() == null || result.getSummary().isEmpty()) return;
-        if (deck.getAiCache() == null) {
-            deck.setAiCache(AiCacheEntity.builder().build());
-        }
-        writeCache.accept(deck.getAiCache(), result);
-        repo.save(deck)
-                .doOnError(e -> log.warn("Failed to cache AI response for deck {}: {}", deck.getId(), e.getMessage()))
-                .subscribe();
+    /**
+     * Writes the result into the deck's cache with one update that touches only that result and its
+     * time, never the whole deck. The time is when the call started. A failure to cache is logged
+     * and the caller still gets the result.
+     */
+    private Mono<Void> persistCache(String deckId, String operation, DeckAiResultDto result, Instant startedAt) {
+        if (result == null || result.getSummary() == null || result.getSummary().isEmpty()) return Mono.empty();
+        return repo.cacheAiResult(deckId, operation, result, startedAt)
+                .onErrorResume(e -> {
+                    log.warn("Failed to cache AI response for deck {}: {}", deckId, e.getMessage());
+                    return Mono.empty();
+                });
     }
 
     private Mono<DeckEntity> loadOwnedDeck(String deckId, Principal principal) {
@@ -205,11 +202,9 @@ public class DeckAiServiceImpl implements DeckAiService {
                 deck.getFormat() != null ? deck.getFormat().name() : "COMMANDER",
                 commanderName(deck),
                 deckList(deck));
+        // Two first calls at once both create a session; only one is kept, and both use it.
         return aiClient.createSession(req)
-                .flatMap(session -> {
-                    deck.setAiSessionId(session.getId());
-                    return repo.save(deck).thenReturn(session.getId());
-                });
+                .flatMap(session -> repo.claimAiSession(deck.getId(), session.getId()));
     }
 
     private static String commanderName(DeckEntity deck) {

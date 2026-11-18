@@ -59,6 +59,11 @@ class DeckAiServiceImplTest {
 
         repo = mock(DeckRepository.class);
         when(repo.save(any(DeckEntity.class))).thenAnswer(call -> Mono.just(call.getArgument(0)));
+        // The session and the cache are written with targeted updates: the first session offered wins.
+        when(repo.claimAiSession(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(call -> Mono.just(call.getArgument(1)));
+        when(repo.cacheAiResult(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                any(), any())).thenReturn(Mono.empty());
         service = new DeckAiServiceImpl(repo, new DracolichAiClient(config.aiApiWebClient()));
     }
 

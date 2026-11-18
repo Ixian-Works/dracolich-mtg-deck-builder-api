@@ -60,6 +60,20 @@
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- A real mongod for tests, started without Docker (allowed by the owner on 2026-11-18).
+             Its MongoDB driver is excluded so the tests use the driver the application runs with. -->
+        <dependency>
+            <groupId>de.flapdoodle.embed</groupId>
+            <artifactId>de.flapdoodle.embed.mongo</artifactId>
+            <version>5.0.0</version>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.mongodb</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <!-- The AI tests reach a local stand-in for ai-api through the real WebClient. At runtime
              the web module supplies this starter. -->
         <dependency>
