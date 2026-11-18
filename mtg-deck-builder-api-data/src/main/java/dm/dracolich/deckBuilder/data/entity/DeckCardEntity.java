@@ -29,6 +29,9 @@ public class DeckCardEntity {
     private String typeLine;
     @Field("image_uri")
     private Map<String, String> imageUri; // user can choose which version to use, otherwise it's the default one
+    // Who painted the snapshot's art, for crediting it wherever the art is shown. Null on cards
+    // saved before it was snapshotted; adding the card to that board again fills it in.
+    private String artist;
     private Integer count; // quantity on deck - must be 1 for commander decks
     @Field("card_category")
     private CardCategory cardCategory; // null if commander

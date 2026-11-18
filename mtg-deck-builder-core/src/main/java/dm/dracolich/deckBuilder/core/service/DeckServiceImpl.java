@@ -376,6 +376,8 @@ public class DeckServiceImpl implements DeckService {
                 .typeLine(libraryCard.getDefaultFace().getFullType())
                 .imageUri(libraryCard.getDefaultArt() != null
                         ? libraryCard.getDefaultArt().getImageUris() : null)
+                .artist(libraryCard.getDefaultArt() != null
+                        ? libraryCard.getDefaultArt().getArtist() : null)
                 .count(count)
                 .cardCategory(category)
                 .build();

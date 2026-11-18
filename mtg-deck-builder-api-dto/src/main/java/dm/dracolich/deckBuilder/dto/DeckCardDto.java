@@ -31,6 +31,8 @@ public class DeckCardDto {
     private String typeLine;
     @JsonProperty("image_uri")
     private Map<String, String> imageUri;
+    /** Who painted the card's art, for crediting it wherever the art is shown. */
+    private String artist;
     private Integer count;
     @JsonProperty("card_category")
     private CardCategory cardCategory;

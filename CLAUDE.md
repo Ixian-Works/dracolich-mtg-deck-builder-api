@@ -159,7 +159,7 @@ aiCache (AiCacheEntity) — structured suggest + analyze results
 
 ```
 cardId (FK → mtg-library-api), name, manaCost, cmc, colors, typeLine,
-imageUri (Map<String,String> — Scryfall sizes), count, cardCategory
+imageUri (Map<String,String> — Scryfall sizes), artist, count, cardCategory
 ```
 
 Display data is denormalized for fast deck reads. Card identity stays referential via `cardId`. The `(cardId, cardCategory)` pair is the unique key when targeting a specific copy via PUT/DELETE — same `cardId` can appear with different `cardCategory` values across MAINBOARD / SIDEBOARD / MAYBE_BOARD.
