@@ -86,7 +86,7 @@ class FavoriteUpdatesTest {
         verify(template).updateFirst(query.capture(), update.capture(), eq(DeckEntity.class));
         assertThat(query.getValue().getQueryObject()).isEqualTo(new Document("_id", "deck-1"));
         assertThat(update.getValue().getUpdateObject())
-                .isEqualTo(new Document("$inc", new Document("favorites_count", 1)));
+                .isEqualTo(new Document("$inc", new Document("favorites_count", 1).append("version", 1)));
     }
 
     @Test
@@ -102,6 +102,6 @@ class FavoriteUpdatesTest {
         assertThat(query.getValue().getQueryObject())
                 .isEqualTo(new Document("_id", "deck-1").append("favorites_count", new Document("$gte", 1)));
         assertThat(update.getValue().getUpdateObject())
-                .isEqualTo(new Document("$inc", new Document("favorites_count", -1)));
+                .isEqualTo(new Document("$inc", new Document("favorites_count", -1).append("version", 1)));
     }
 }

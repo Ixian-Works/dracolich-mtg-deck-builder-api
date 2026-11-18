@@ -146,7 +146,16 @@ cards (List<DeckCardEntity>), favoritesCount (Long, default 0)
 visibility (PUBLIC | PRIVATE | UNLISTED)
 aiSessionId (String) — ai-api session reused per deck
 aiCache (AiCacheEntity) — structured suggest + analyze results
+version (Long, @Version) — optimistic locking
 ```
+
+- **Concurrent writes.** A whole-deck save carrying an older `version` fails with
+  `OptimisticLockingFailureException` instead of overwriting a newer write. Edits in `DeckServiceImpl`
+  rerun read-change-save up to three times, then answer 409 (`DMD048`). The favorites counter, the AI
+  cache and the ai-api session id are written with targeted updates (`$inc`, `$set`) that also bump
+  `version`, so they never save the whole deck and a stale save can't undo them.
+  `DeckVersionBackfill` gives decks saved before versioning `version: 0` at startup; without it,
+  saving one would be treated as an insert. `DeckWriteRaceTest` covers this against an embedded MongoDB.
 
 - `userId` xor `anonId` (anon decks always `visibility=PRIVATE`)
 - `commander.cardCategory` is null (commander zone is separate from MAINBOARD/SIDEBOARD/MAYBE_BOARD)
@@ -271,6 +280,7 @@ Shared `paginated(criteria, page, size, sort)` helper does the count + find + `P
 | DMD035 | Deck import failed (per-line errors in response, returns 422) |
 | DMD036 | Deck already claimed (returns 409) |
 | DMD044 | Invalid deck change, such as a count below 1 or more than two commanders (returns 400) |
+| DMD048 | The deck was changed by other requests three times in a row during an edit (returns 409) |
 | DMD040 | ai-api rejected the request (422 and 429 pass through; any other 4xx returns 502) |
 | DMD041 | ai-api unavailable (returns 503) |
 | DMD042 | The deck has no cards to send to the AI (returns 422) |

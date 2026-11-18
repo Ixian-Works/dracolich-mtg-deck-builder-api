@@ -37,6 +37,12 @@ public final class ErrorUtil {
                 List.of(error), HttpStatus.BAD_REQUEST);
     }
 
+    public static ResponseException deckChangedConcurrently(String deckId) {
+        var error = new ApiError(ErrorCodes.DMD048);
+        return new ResponseException(ErrorCodes.DMD048.format(deckId),
+                List.of(error), HttpStatus.CONFLICT);
+    }
+
     public static ResponseException deckAlreadyClaimed(String deckId) {
         var error = new ApiError(ErrorCodes.DMD036);
         return new ResponseException(ErrorCodes.DMD036.format(deckId),

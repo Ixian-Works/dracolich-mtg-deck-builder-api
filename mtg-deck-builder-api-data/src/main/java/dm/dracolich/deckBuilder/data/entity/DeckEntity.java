@@ -9,6 +9,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
 
@@ -24,6 +25,10 @@ import java.util.Set;
 public class DeckEntity {
     @Id
     private String id;
+    // Optimistic locking: a save carrying an older version fails instead of overwriting a newer
+    // write. Targeted updates ($set, $inc) bump it too, so a stale whole-deck save can't undo them.
+    @Version
+    private Long version;
     @Field("copied_from_id")
     private String copiedFromId; // if deck was copied
     @Field("user_id")

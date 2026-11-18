@@ -44,7 +44,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import org.springframework.dao.OptimisticLockingFailureException;
+import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -54,6 +57,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.deckAlreadyClaimed;
+import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.deckChangedConcurrently;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.importFailed;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.invalidDeckChange;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.notFound;
@@ -84,6 +88,7 @@ public class DeckServiceImpl implements DeckService {
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> buildAddCardToDeckEntity(principal, id, request))
                 .flatMap(repo::save)
+                .transform(retryOnConflict(id))
             .map(mapper::toDto);
     }
 
@@ -107,7 +112,8 @@ public class DeckServiceImpl implements DeckService {
     public Mono<Boolean> deleteDeckById(String id) {
         return ReactiveSecurityContextUtil.getPrincipal()
                 .switchIfEmpty(Mono.error(unauthorized()))
-                .flatMap(principal -> buildDeleteDeckEntity(principal, id));
+                .flatMap(principal -> buildDeleteDeckEntity(principal, id))
+                .transform(retryOnConflict(id));
     }
 
     @Override
@@ -116,6 +122,7 @@ public class DeckServiceImpl implements DeckService {
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> buildRemoveCardFromDeck(principal, id, cardId, category))
                 .flatMap(repo::save)
+                .transform(retryOnConflict(id))
             .thenReturn(true);
     }
 
@@ -125,6 +132,7 @@ public class DeckServiceImpl implements DeckService {
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> buildUpdateDeckEntity(principal, id, request))
                 .flatMap(repo::save)
+                .transform(retryOnConflict(id))
                 .map(mapper::toDto);
     }
 
@@ -134,6 +142,7 @@ public class DeckServiceImpl implements DeckService {
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> buildUpdateCardInDeck(principal, id, cardId, category, request))
                 .flatMap(repo::save)
+                .transform(retryOnConflict(id))
                 .map(mapper::toDto);
     }
 
@@ -143,6 +152,7 @@ public class DeckServiceImpl implements DeckService {
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> buildClaimDeck(principal, id, cookieAnonId))
                 .flatMap(repo::save)
+                .transform(retryOnConflict(id))
                 .map(mapper::toDto);
     }
 
@@ -479,6 +489,19 @@ public class DeckServiceImpl implements DeckService {
                 .flatMap(deck -> OwnershipResolver.ownedBy(principal, deck.getUserId(), deck.getAnonId())
                         ? Mono.just(deck)
                         : Mono.error(unauthorized()));
+    }
+
+    /**
+     * Reruns a read-change-save when the save lost a race. The deck carries a version, so a save
+     * built from a copy that another request has since changed fails instead of overwriting it; the
+     * rerun reads the newer deck and applies the change to it. After three conflicts in a row the
+     * caller gets 409.
+     */
+    private static <T> java.util.function.Function<Mono<T>, Mono<T>> retryOnConflict(String deckId) {
+        return call -> call
+                .retryWhen(Retry.max(3).filter(OptimisticLockingFailureException.class::isInstance))
+                .onErrorMap(e -> Exceptions.isRetryExhausted(e) || e instanceof OptimisticLockingFailureException,
+                        e -> deckChangedConcurrently(deckId));
     }
 
     /**

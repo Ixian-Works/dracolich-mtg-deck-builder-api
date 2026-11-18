@@ -1,6 +1,7 @@
 package dm.dracolich.deckBuilder.data.repository.custom;
 
 import dm.dracolich.deckBuilder.data.entity.DeckEntity;
+import dm.dracolich.deckBuilder.dto.DeckAiResultDto;
 import dm.dracolich.deckBuilder.dto.enums.DeckStatus;
 import dm.dracolich.deckBuilder.dto.enums.Visibility;
 import dm.dracolich.mtgLibrary.dto.enums.Format;
@@ -15,12 +16,15 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
 @RequiredArgsConstructor
 public class DeckCustomRepositoryImpl implements DeckCustomRepository {
     static final String FAVORITES_COUNT = "favorites_count";
+    static final String VERSION = "version";
+    static final String AI_SESSION_ID = "ai_session_id";
 
     private final ReactiveMongoTemplate mongoTemplate;
 
@@ -31,8 +35,32 @@ public class DeckCustomRepositoryImpl implements DeckCustomRepository {
             // A missing or too-small counter doesn't match, so it can't go negative.
             criteria.and(FAVORITES_COUNT).gte(-delta);
         }
-        return mongoTemplate.updateFirst(Query.query(criteria), new Update().inc(FAVORITES_COUNT, delta), DeckEntity.class)
+        return mongoTemplate.updateFirst(Query.query(criteria),
+                        new Update().inc(FAVORITES_COUNT, delta).inc(VERSION, 1), DeckEntity.class)
                 .then();
+    }
+
+    @Override
+    public Mono<Void> cacheAiResult(String deckId, String kind, DeckAiResultDto result, Instant at) {
+        if (!kind.equals("suggest") && !kind.equals("analyze")) {
+            return Mono.error(new IllegalArgumentException("Unknown AI result kind: " + kind));
+        }
+        Update update = new Update()
+                .set("ai_cache." + kind + "_result", result)
+                .set("ai_cache." + kind + "_at", at)
+                .inc(VERSION, 1);
+        return mongoTemplate.updateFirst(Query.query(Criteria.where("_id").is(deckId)), update, DeckEntity.class)
+                .then();
+    }
+
+    @Override
+    public Mono<String> claimAiSession(String deckId, String sessionId) {
+        Query unclaimed = Query.query(Criteria.where("_id").is(deckId).and(AI_SESSION_ID).is(null));
+        Update update = new Update().set(AI_SESSION_ID, sessionId).inc(VERSION, 1);
+        return mongoTemplate.updateFirst(unclaimed, update, DeckEntity.class)
+                .flatMap(result -> result.getModifiedCount() > 0
+                        ? Mono.just(sessionId)
+                        : mongoTemplate.findById(deckId, DeckEntity.class).mapNotNull(DeckEntity::getAiSessionId));
     }
 
     @Override
