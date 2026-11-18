@@ -12,6 +12,7 @@ import dm.dracolich.deckBuilder.dto.UpdateDeckRequest;
 import dm.dracolich.deckBuilder.integration.DracolichMtgLibraryClient;
 import dm.dracolich.forge.exception.ResponseException;
 import dm.dracolich.forge.security.Principal;
+import dm.dracolich.mtgLibrary.dto.ArtPropertyDto;
 import dm.dracolich.mtgLibrary.dto.CardDto;
 import dm.dracolich.mtgLibrary.dto.CardFaceDto;
 import dm.dracolich.mtgLibrary.dto.GameplayPropertyDto;
@@ -182,5 +183,37 @@ class DeckServiceImplCardsTest {
         verify(library, never()).fetchCardById(anyString());
         verify(library, never()).resolveCards(org.mockito.ArgumentMatchers.anyList());
         verify(repo, never()).save(any(DeckEntity.class));
+    }
+
+    @Test
+    void anAddedCardCarriesTheArtistOfItsArt() {
+        deckWith();
+        libraryHas("bolt", Color.R);
+        ArtPropertyDto art = new ArtPropertyDto();
+        art.setArtist("Christopher Moeller");
+        libraryCards.get("bolt").setDefaultArt(art);
+
+        StepVerifier.create(asOwner(service.addCardToDeck(DECK_ID, new CardRequest("bolt", MAINBOARD, 1))))
+                .expectNextCount(1).verifyComplete();
+
+        assertThat(saved.get().getCards()).singleElement()
+                .satisfies(c -> assertThat(c.getArtist()).isEqualTo("Christopher Moeller"));
+    }
+
+    @Test
+    void anOlderEntryGainsTheArtistWhenTheCardIsAddedAgain() {
+        deckWith(entry("bolt", MAINBOARD, 1));
+        libraryHas("bolt", Color.R);
+        ArtPropertyDto art = new ArtPropertyDto();
+        art.setArtist("Christopher Moeller");
+        libraryCards.get("bolt").setDefaultArt(art);
+
+        StepVerifier.create(asOwner(service.addCardToDeck(DECK_ID, new CardRequest("bolt", MAINBOARD, 1))))
+                .expectNextCount(1).verifyComplete();
+
+        assertThat(saved.get().getCards()).singleElement().satisfies(c -> {
+            assertThat(c.getCount()).isEqualTo(2);
+            assertThat(c.getArtist()).isEqualTo("Christopher Moeller");
+        });
     }
 }

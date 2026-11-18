@@ -48,6 +48,7 @@ public final class DeckCards {
                     existing.setCount(existing.getCount() + count);
                     // An entry saved before colour identity was snapshotted picks it up here.
                     if (existing.getColorIdentity() == null) existing.setColorIdentity(card.getColorIdentity());
+                    if (existing.getArtist() == null) existing.setArtist(card.getArtist());
                 },
                 () -> deck.getCards().add(card));
     }
