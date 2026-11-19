@@ -264,7 +264,7 @@ public class DeckServiceImpl implements DeckService {
         Instant now = Instant.now();
 
         // Whoever may read the deck may copy it: its owner whatever its visibility, anyone
-        // else only a public one, the same rule as GET /decks/{id}. The copy starts with
+        // else a public or unlisted one, the same rule as GET /decks/{id}. The copy starts with
         // no AI session and no AI cache, so the two decks never share a conversation.
         return repo.findById(id)
                 .switchIfEmpty(Mono.error(notFound("copy_deck", "deck", id)))
@@ -539,8 +539,13 @@ public class DeckServiceImpl implements DeckService {
         return deck;
     }
 
+    /**
+     * Who may read a deck, and so open it, read its statistics and validation, export it and
+     * copy it: anyone for a public deck or an unlisted one (an unlisted deck is opened by its
+     * link and appears in no listing), and only its owner for a private one.
+     */
     private boolean canAccess(DeckEntity deck, Principal principal) {
-        if(deck.getVisibility() == Visibility.PUBLIC)
+        if(deck.getVisibility() == Visibility.PUBLIC || deck.getVisibility() == Visibility.UNLISTED)
             return true;
 
         if(principal == null)

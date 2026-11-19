@@ -67,12 +67,12 @@ Base path: `/dracolich/mtg-deck-builder/api/v0/`
 | POST | `/import/validate` (JSON) | NO | Validate + stats from text without persisting |
 | POST | `/import/validate` (text/plain) | NO | Same, raw body |
 | POST | `/{id}/cards` | OWNED | Add card to a deck the caller owns, into `card_category` (default MAINBOARD). If that board already holds the card, its count rises instead of a second entry appearing. Bumps `audit.lastModified`, invalidates AI cache. |
-| POST | `/{id}/copy` | YES | Copy a deck the caller can read (by the `GET /{id}` rule: one's own whatever its visibility, anyone else's only if PUBLIC) into the caller's account. The copy is PRIVATE, keeps its name if it was someone else's and is `<name> (copy)` if it was the caller's own (`Untitled deck` when unnamed), keeps `copiedFromId`, resets `favoritesCount`, and has no AI session or cache. Guests get 401. |
+| POST | `/{id}/copy` | YES | Copy a deck the caller can read (by the `GET /{id}` rule: one's own whatever its visibility, anyone else's if PUBLIC or UNLISTED) into the caller's account. The copy is PRIVATE, keeps its name if it was someone else's and is `<name> (copy)` if it was the caller's own (`Untitled deck` when unnamed), keeps `copiedFromId`, resets `favoritesCount`, and has no AI session or cache. Guests get 401. |
 | POST | `/{id}/claim` | YES (USER) + anon cookie | Transfer anon-owned deck to the authenticated user. Verifies signed `dracolich_anon_id` cookie matches `deck.anonId`. 409 if already claimed (DMD036). |
 | GET | `/` | YES | Paginated list of caller's decks. Optional filters: `format`, `status`, `visibility` |
 | GET | `/popular` | NO | Public decks sorted by `favoritesCount` DESC. Optional `format` filter |
 | GET | `/latest` | NO | Public decks sorted by `audit.created_at` DESC. Optional `format` filter |
-| GET | `/{id}` | NO/OWNED | Public decks → anyone; non-public → owner only |
+| GET | `/{id}` | NO/OWNED | Public and unlisted decks → anyone with the id; private → owner only (see "Visibility" below) |
 | GET | `/{id}/stats` | NO/OWNED | Deterministic stats (mana curve, color pie, type breakdown, warnings) |
 | GET | `/{id}/validate` | NO/OWNED | Format rules validation against the saved deck |
 | GET | `/{id}/export` | NO/OWNED | Returns the deck as Scryfall-compatible text (`text/plain`) |
@@ -164,6 +164,19 @@ version (Long, @Version) — optimistic locking
 - `audit.lastModified` is bumped on any composition or metadata change via `touchLastModified()` — drives AI cache invalidation
 - Claim flow: sets `userId = principal.id()`, clears `anonId`, leaves cards/cache intact (no `lastModified` bump since composition unchanged)
 - `DeckDto` exposes computed `card_count`, `mainboard_count`, `sideboard_count`, `maybeboard_count` via MapStruct `@AfterMapping`
+
+### Visibility
+
+| Visibility | Who can open it by its id (deck, stats, validation, export) | Who can copy it | Who can favorite it | Listed (popular, latest, a profile's decks, favorites) |
+|---|---|---|---|---|
+| `PUBLIC` | Anyone, signed in or not | Any signed-in player | Any signed-in player | Yes |
+| `UNLISTED` | Anyone with its link, signed in or not | Any signed-in player | Its owner only | No |
+| `PRIVATE` | Its owner only | Its owner only | Its owner only | No |
+
+The owner's own list (`GET /decks`) holds all three. `canAccess` in `DeckServiceImpl` decides reading and
+copying. `FavoriteServiceImpl.isPublic` decides favoriting, and is narrower so that an unlisted deck
+never lands in anyone's Favorites; nobody can favorite their own deck. A guest's deck is always private. Unlisted decks opened by link and
+copyable by link came with Ixian-Works/dracolich-mtg-deck-builder-api#34.
 
 ### `DeckCardEntity` (embedded — denormalized snapshot)
 

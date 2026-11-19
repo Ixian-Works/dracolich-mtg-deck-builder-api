@@ -92,10 +92,18 @@ class DeckServiceImplCopyTest {
         assertThat(copy.getCommander()).isNotSameAs(source.getCommander());
     }
 
-    @ParameterizedTest
-    @EnumSource(value = Visibility.class, names = {"PRIVATE", "UNLISTED"})
-    void anotherPlayerIsRefusedADeckTheyCannotRead(Visibility visibility) {
-        deckExists(deck(visibility));
+    @Test
+    void anotherPlayerMayCopyAnUnlistedDeckTheyHaveTheLinkTo() {
+        deckExists(deck(Visibility.UNLISTED));
+
+        StepVerifier.create(copyAs(Principal.user(OTHER))).expectNextCount(1).verifyComplete();
+
+        assertThat(saved().getVisibility()).isEqualTo(Visibility.PRIVATE);
+    }
+
+    @Test
+    void anotherPlayerIsRefusedAPrivateDeck() {
+        deckExists(deck(Visibility.PRIVATE));
 
         StepVerifier.create(copyAs(Principal.user(OTHER)))
                 .expectErrorSatisfies(error -> assertError(error, HttpStatus.UNAUTHORIZED, "DMD034"))
