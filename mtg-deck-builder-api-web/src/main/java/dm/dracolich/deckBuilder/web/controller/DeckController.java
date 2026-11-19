@@ -1,12 +1,14 @@
 package dm.dracolich.deckBuilder.web.controller;
 
 import dm.dracolich.deckBuilder.core.service.DeckService;
+import dm.dracolich.deckBuilder.dto.AddCardsRequest;
 import dm.dracolich.deckBuilder.dto.CardRequest;
 import dm.dracolich.deckBuilder.dto.CreateDeckRequest;
 import dm.dracolich.deckBuilder.dto.DeckAnalysisDto;
 import dm.dracolich.deckBuilder.dto.DeckDto;
 import dm.dracolich.deckBuilder.dto.DeckStatsDto;
 import dm.dracolich.deckBuilder.dto.DeckValidationDto;
+import dm.dracolich.deckBuilder.dto.ImportCheckDto;
 import dm.dracolich.deckBuilder.dto.ImportDeckRequest;
 import dm.dracolich.deckBuilder.dto.ImportValidateRequest;
 import dm.dracolich.deckBuilder.dto.UpdateCardRequest;
@@ -75,6 +77,21 @@ public class DeckController {
     public Mono<DeckDto> addCardToDeck(@PathVariable String id,
                                  @Valid @RequestBody CardRequest request) {
         return service.addCardToDeck(id, request);
+    }
+
+    @Operation(summary = "Add many cards", description = "Add a list of cards to a deck the caller owns, in one write, each merging with an entry already on its board. Applied together or not at all: one card the library doesn't have refuses the whole request and changes nothing. At most 250 cards.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Cards added",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "400", description = "An empty list, more than 250 cards, or a count below 1"),
+            @ApiResponse(responseCode = "401", description = "Not the deck's owner"),
+            @ApiResponse(responseCode = "404", description = "The deck, or a card in the list, doesn't exist (DMD033)"),
+            @ApiResponse(responseCode = "409", description = "The deck kept changing under the write (DMD048)")
+    })
+    @PostMapping(path = {"/{id}/cards/batch"}, produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<DeckDto> addCardsToDeck(@PathVariable String id,
+                                        @Valid @RequestBody AddCardsRequest request) {
+        return service.addCardsToDeck(id, request);
     }
 
     @Operation(summary = "Update deck metadata", description = "Update deck metadata (name, description, format, status, visibility) and the commanders (commander_ids: one, or two for partners; an empty list removes them). Only non-null fields are applied. Anon owners cannot promote a deck off PRIVATE.")
@@ -363,6 +380,19 @@ public class DeckController {
             produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<DeckAnalysisDto> validateImportedDeck(@Valid @RequestBody ImportValidateRequest request) {
         return service.validateImportedDeck(request);
+    }
+
+    @Operation(summary = "Check a pasted decklist", description = "Reads a pasted list line by line and never refuses it for its content. For every non-blank line: its number and text, and either the card it matched (count, board, card id and name), the board a heading switched to, or a reason code (NOT_A_CARD_LINE, COUNT_NOT_VALID, NO_SUCH_CARD, UNKNOWN_HEADING). With the format's rule problems and the statistics of the lines that matched. Saves nothing; works for a guest.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "The lines, the rule problems and the statistics",
+                    content = @Content(schema = @Schema(implementation = ImportCheckDto.class))),
+            @ApiResponse(responseCode = "503", description = "MTG Library unavailable")
+    })
+    @PostMapping(path = {"/import/check"},
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ImportCheckDto> checkImport(@Valid @RequestBody ImportValidateRequest request) {
+        return service.checkImport(request);
     }
 
     @Operation(summary = "Validate an imported deck text (plain text body)", description = "Same as POST /decks/import/validate but accepts a raw text/plain body — useful for pasting decklists without JSON escaping. Format travels as a query param.")

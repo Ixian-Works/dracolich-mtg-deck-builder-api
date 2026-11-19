@@ -60,13 +60,15 @@ Base path: `/dracolich/mtg-deck-builder/api/v0/`
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/` | OWNED | Create a deck (anon → forced PRIVATE; user → respects request `visibility`). Bumps `audit.lastModified`. |
+| POST | `/` | OWNED | Create a deck (anon → forced PRIVATE; user → respects request `visibility`). The commander is `commander` (one) or `commanders` (one or two, a partner pair); giving both, or more than two, is 400 (DMD044). Bumps `audit.lastModified`. |
 | POST | `/validate` | NO | Stateless: validate + stats for an unsaved deck (sent in body) |
 | POST | `/import` (JSON) | OWNED | Import a deck from Scryfall/Moxfield-style text. Strict mode: fails entirely if any card unresolvable. |
 | POST | `/import` (text/plain) | OWNED | Same as above, body is raw deck text, metadata in query params |
 | POST | `/import/validate` (JSON) | NO | Validate + stats from text without persisting |
 | POST | `/import/validate` (text/plain) | NO | Same, raw body |
+| POST | `/import/check` (JSON) | NO | Check a pasted list line by line, never refusing it for its content: every non-blank line's number, text, and the card it matched (count, board, `card_id`, `card_name`), the board a heading switched to, or a reason code. With the format's rule problems and the stats of the matched lines. Saves nothing. See "Deck Text Parser" below. |
 | POST | `/{id}/cards` | OWNED | Add card to a deck the caller owns, into `card_category` (default MAINBOARD). If that board already holds the card, its count rises instead of a second entry appearing. Bumps `audit.lastModified`, invalidates AI cache. |
+| POST | `/{id}/cards/batch` | OWNED | Add many cards (`cards`: card id, count, board; at most 250) in one write, each merging with an entry on its board. All or nothing: a card the library doesn't have is 404 (DMD033) and the deck is unchanged. |
 | POST | `/{id}/copy` | YES | Copy a deck the caller can read (by the `GET /{id}` rule: one's own whatever its visibility, anyone else's if PUBLIC or UNLISTED) into the caller's account. The copy is PRIVATE, keeps its name if it was someone else's and is `<name> (copy)` if it was the caller's own (`Untitled deck` when unnamed), keeps `copiedFromId`, resets `favoritesCount`, and has no AI session or cache. Guests get 401. |
 | POST | `/{id}/claim` | YES (USER) + anon cookie | Transfer anon-owned deck to the authenticated user. Verifies signed `dracolich_anon_id` cookie matches `deck.anonId`. 409 if already claimed (DMD036). |
 | GET | `/` | YES | Paginated list of caller's decks. Optional filters: `format`, `status`, `visibility` |
@@ -231,12 +233,43 @@ Used by `/decks/{id}/stats`, `/decks/validate`, `/decks/import/validate`, AND th
 
 ## Deck Text Parser / Exporter
 
-`core/text/DeckTextParser` + `DeckTextExporter` handle Scryfall/Moxfield-format decklists:
+`core/text/DeckTextParser` reads a pasted list line by line; `DeckTextExporter` writes one. What the
+parser accepts (Ixian-Works/dracolich-mtg-deck-builder-api#30), with an example of each:
 
-- Section markers: `// Commander`, `// Sideboard`, `// Outside the Game`, `// Maybeboard`
-- Strips set codes `(CMM)`, collector numbers, foil markers `*F*`
-- DFC name resolution flows through mtg-library-api
-- Strict mode: any unresolved card name fails the entire import with per-line errors (HTTP 422, error code DMD035)
+| Form | Example | Read as |
+|---|---|---|
+| Count and name | `4 Lightning Bolt` | 4 copies on the current board |
+| Count with an x | `4x Lightning Bolt`, `4 x Lightning Bolt` | 4 copies |
+| A name alone | `Sol Ring` | 1 copy |
+| Set, number, foil after the name | `4 Lightning Bolt (M21) 162`, `1 Sol Ring *F*` | The name only |
+| A split card | `1 Fire // Ice`, `Fire // Ice` | A card, not a heading |
+| Sideboard prefix | `SB: 2 Negate` | 2 copies in the sideboard, whatever the heading; the heading stays |
+| Main deck heading | `Deck`, `Main`, `Mainboard`, `Main deck`, `// Deck` | Later cards go in the main deck |
+| Other board headings | `Commander`, `Sideboard`, `Side`, `Maybeboard`, `Maybe`, `// Outside the Game` | Later cards go there |
+| Any heading's decoration | `sideboard:`, `Deck (60)`, `Main [60]`, `//Sideboard` | Case, `//`, a trailing colon and a bracketed count don't matter |
+
+A line with a count is always a card, so `1 Commander` is a card; for a line with no count a heading
+word wins. Blank lines are skipped and still counted in line numbers.
+
+Reason codes (`ImportLineReason`), for a line not read as a card or a board heading:
+
+| Code | When | Example |
+|---|---|---|
+| `NOT_A_CARD_LINE` | No card name in it | `4`, `SB:`, `***` |
+| `COUNT_NOT_VALID` | A count of 0, or too large | `0 Lightning Bolt` |
+| `NO_SUCH_CARD` | A card line whose name the library doesn't have (`/import/check` only, with `name_as_read`) | `1 Not A Card` |
+| `UNKNOWN_HEADING` | A heading that names no board; it changes nothing | `Companion`, `About`, `Name My deck`, `Lands (36)`, any other `// …` line |
+
+`/import/check` reports every line this way and never refuses. `/import` and `/import/validate` stay
+strict: any line with a reason other than `UNKNOWN_HEADING`, or a name the library doesn't have, fails
+the whole list with 422 and DMD035, one error per line. The app creates a pasted deck through
+`POST /decks` with the ids the check returned, or adds to one through `/{id}/cards/batch`.
+
+The exporter writes the main deck with no heading, then `// Commander`, `// Sideboard` and
+`// Maybeboard`, which the parser reads back as the same list. Whether other products accept that
+text, or what exactly they export, nobody has tried yet.
+
+DFC name resolution flows through mtg-library-api.
 
 ## AI Bridge
 

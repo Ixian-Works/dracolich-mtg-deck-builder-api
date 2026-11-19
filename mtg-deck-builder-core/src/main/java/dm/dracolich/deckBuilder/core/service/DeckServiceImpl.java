@@ -7,6 +7,10 @@ import dm.dracolich.deckBuilder.core.stats.DeckStatsCalculator;
 import dm.dracolich.deckBuilder.core.text.DeckTextExporter;
 import dm.dracolich.deckBuilder.core.text.DeckTextParser;
 import dm.dracolich.deckBuilder.core.text.ParsedLine;
+import dm.dracolich.deckBuilder.dto.ImportCheckDto;
+import dm.dracolich.deckBuilder.dto.ImportLineDto;
+import dm.dracolich.deckBuilder.dto.ImportLineDto.ImportBoard;
+import dm.dracolich.deckBuilder.dto.enums.ImportLineReason;
 import dm.dracolich.deckBuilder.core.validation.FormatRuleSet;
 import dm.dracolich.deckBuilder.core.validation.FormatRuleSetRegistry;
 import dm.dracolich.deckBuilder.data.entity.AuditEntity;
@@ -15,6 +19,7 @@ import dm.dracolich.deckBuilder.data.entity.DeckEntity;
 import dm.dracolich.deckBuilder.data.entity.FavoriteEntity;
 import dm.dracolich.deckBuilder.data.repository.DeckRepository;
 import dm.dracolich.deckBuilder.data.repository.FavoriteRepository;
+import dm.dracolich.deckBuilder.dto.AddCardsRequest;
 import dm.dracolich.deckBuilder.dto.CardRequest;
 import dm.dracolich.deckBuilder.dto.CreateDeckRequest;
 import dm.dracolich.deckBuilder.dto.DeckAnalysisDto;
@@ -87,6 +92,26 @@ public class DeckServiceImpl implements DeckService {
         return ReactiveSecurityContextUtil.getPrincipal()
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> buildAddCardToDeckEntity(principal, id, request))
+                .flatMap(repo::save)
+                .transform(retryOnConflict(id))
+            .map(mapper::toDto);
+    }
+
+    /**
+     * Adds many cards in one versioned write: every card is fetched from the library first, and the
+     * deck is saved only when all of them were found, so a failure leaves it as it was. Each merges
+     * with an entry already on its board, as a single add does.
+     */
+    @Override
+    public Mono<DeckDto> addCardsToDeck(String id, AddCardsRequest request) {
+        return ReactiveSecurityContextUtil.getPrincipal()
+                .switchIfEmpty(Mono.error(unauthorized()))
+                .flatMap(principal -> loadOwnedDeckOrFail(id, principal, "add_cards_to_deck")
+                        .flatMap(deck -> buildDeckCards(List.of(), request.cards(), "add_cards_to_deck")
+                                .map(resolved -> {
+                                    resolved.cards().forEach(card -> DeckCards.add(deck, card));
+                                    return touchLastModified(deck);
+                                })))
                 .flatMap(repo::save)
                 .transform(retryOnConflict(id))
             .map(mapper::toDto);
@@ -249,7 +274,7 @@ public class DeckServiceImpl implements DeckService {
     }
 
     private Mono<DeckEntity> buildTransientDeck(ValidateDeckRequest request) {
-        return buildDeckCards(request.commander(), request.cards(), "validate_deck")
+        return buildDeckCards(request.commander() != null ? List.of(request.commander()) : List.of(), request.cards(), "validate_deck")
                 .map(resolved -> DeckEntity.builder()
                         .format(request.format())
                         .commander(new ArrayList<>(resolved.commander()))
@@ -315,8 +340,14 @@ public class DeckServiceImpl implements DeckService {
 
     private Mono<DeckEntity> buildCreateDeckEntity(Principal principal, CreateDeckRequest request) {
         Instant now = Instant.now();
+        if (request.commander() != null && request.commanders() != null && !request.commanders().isEmpty()) {
+            return Mono.error(invalidDeckChange("give commander or commanders, not both"));
+        }
+        if (request.allCommanders().size() > 2) {
+            return Mono.error(invalidDeckChange("a deck has at most two commanders"));
+        }
 
-        return buildDeckCards(request.commander(), request.cards(), "create_deck")
+        return buildDeckCards(request.allCommanders(), request.cards(), "create_deck")
                 .map(touple -> {
                     var builder = DeckEntity.builder()
                             .copiedFromId(request.copiedFromId())
@@ -367,9 +398,8 @@ public class DeckServiceImpl implements DeckService {
      * Snapshots of a deck's commander and cards, from one library call for all of them. A card the
      * library doesn't have is a 404 naming it.
      */
-    private Mono<ResolvedCards> buildDeckCards(CardRequest commander, Collection<CardRequest> cards, String context) {
-        List<CardRequest> requests = new ArrayList<>();
-        if (commander != null) requests.add(commander);
+    private Mono<ResolvedCards> buildDeckCards(List<CardRequest> commanders, Collection<CardRequest> cards, String context) {
+        List<CardRequest> requests = new ArrayList<>(commanders);
         if (cards != null) requests.addAll(cards);
         List<CardIdentifier> identifiers = requests.stream().map(r -> CardIdentifier.byId(r.cardId())).toList();
         return libraryFeignClient.resolveCards(identifiers)
@@ -380,9 +410,12 @@ public class DeckServiceImpl implements DeckService {
                         if (found.get(i) == null) {
                             return Mono.error(notFound(context, "card", request.cardId()));
                         }
-                        snapshots.add(snapshot(found.get(i), request.count(), request.cardCategory()));
+                        // A commander sits in the command zone, one copy, with no board.
+                        snapshots.add(i < commanders.size()
+                                ? snapshot(found.get(i), 1, null)
+                                : snapshot(found.get(i), request.count(), request.cardCategory()));
                     }
-                    int split = commander != null ? 1 : 0;
+                    int split = commanders.size();
                     return Mono.just(new ResolvedCards(
                             new ArrayList<>(snapshots.subList(0, split)),
                             new ArrayList<>(snapshots.subList(split, snapshots.size()))));
@@ -592,13 +625,69 @@ public class DeckServiceImpl implements DeckService {
                 });
     }
 
+    @Override
+    public Mono<ImportCheckDto> checkImport(ImportValidateRequest request) {
+        List<ParsedLine> parsed = DeckTextParser.parse(request.deckText());
+        List<ParsedLine> cardLines = parsed.stream().filter(ParsedLine::isValid).toList();
+        Mono<List<CardDto>> found = cardLines.isEmpty()
+                ? Mono.just(List.of())
+                : libraryFeignClient.resolveCards(cardLines.stream()
+                        .map(l -> CardIdentifier.byName(l.cardName())).toList());
+        return found.map(cards -> {
+            List<ImportLineDto> lines = new ArrayList<>(parsed.size());
+            List<DeckCardEntity> commander = new ArrayList<>();
+            DeckEntity transientDeck = DeckEntity.builder()
+                    .format(request.format())
+                    .commander(commander)
+                    .cards(new ArrayList<>())
+                    .build();
+            int next = 0;
+            for (ParsedLine line : parsed) {
+                ImportBoard board = importBoard(line.section());
+                if (line.kind() == ParsedLine.Kind.HEADING) {
+                    lines.add(new ImportLineDto(line.lineNumber(), line.originalLine(), ImportLineDto.Kind.HEADING,
+                            null, board, null, null, null, null));
+                } else if (line.kind() == ParsedLine.Kind.UNREAD) {
+                    lines.add(new ImportLineDto(line.lineNumber(), line.originalLine(), ImportLineDto.Kind.UNREAD,
+                            null, null, null, null, null, line.reason()));
+                } else {
+                    CardDto card = cards.get(next++);
+                    if (card == null) {
+                        lines.add(new ImportLineDto(line.lineNumber(), line.originalLine(), ImportLineDto.Kind.UNREAD,
+                                line.count(), board, null, null, line.cardName(), ImportLineReason.NO_SUCH_CARD));
+                        continue;
+                    }
+                    lines.add(new ImportLineDto(line.lineNumber(), line.originalLine(), ImportLineDto.Kind.CARD,
+                            line.count(), board, card.getId(), card.getName(), null, null));
+                    DeckCardEntity snapshot = snapshot(card, line.count(), line.section().toCategory());
+                    if (line.section() == ParsedLine.Section.COMMANDER) {
+                        commander.add(snapshot);
+                    } else {
+                        DeckCards.add(transientDeck, snapshot);
+                    }
+                }
+            }
+            DeckCards.refreshColors(transientDeck);
+            return new ImportCheckDto(lines, validateDeck(transientDeck), DeckStatsCalculator.compute(transientDeck));
+        });
+    }
+
+    private static ImportBoard importBoard(ParsedLine.Section section) {
+        return switch (section) {
+            case COMMANDER -> ImportBoard.COMMANDER;
+            case MAINBOARD -> ImportBoard.MAINBOARD;
+            case SIDEBOARD -> ImportBoard.SIDEBOARD;
+            case MAYBEBOARD -> ImportBoard.MAYBE_BOARD;
+        };
+    }
+
     private record ResolvedImport(List<DeckCardEntity> commander, List<DeckCardEntity> cards) {}
 
     private Mono<ResolvedImport> resolveImport(String deckText) {
         List<ParsedLine> parsed = DeckTextParser.parse(deckText);
 
         List<ErrorUtil.ImportFailure> parseFailures = parsed.stream()
-                .filter(p -> !p.isValid())
+                .filter(ParsedLine::refusesStrictImport)
                 .map(p -> new ErrorUtil.ImportFailure(p.lineNumber(), p.originalLine(), p.parseError()))
                 .toList();
 

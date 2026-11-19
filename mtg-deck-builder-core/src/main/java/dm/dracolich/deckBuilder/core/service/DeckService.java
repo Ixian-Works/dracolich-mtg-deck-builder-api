@@ -1,11 +1,13 @@
 package dm.dracolich.deckBuilder.core.service;
 
+import dm.dracolich.deckBuilder.dto.AddCardsRequest;
 import dm.dracolich.deckBuilder.dto.CardRequest;
 import dm.dracolich.deckBuilder.dto.CreateDeckRequest;
 import dm.dracolich.deckBuilder.dto.DeckAnalysisDto;
 import dm.dracolich.deckBuilder.dto.DeckDto;
 import dm.dracolich.deckBuilder.dto.DeckStatsDto;
 import dm.dracolich.deckBuilder.dto.DeckValidationDto;
+import dm.dracolich.deckBuilder.dto.ImportCheckDto;
 import dm.dracolich.deckBuilder.dto.ImportDeckRequest;
 import dm.dracolich.deckBuilder.dto.ImportValidateRequest;
 import dm.dracolich.deckBuilder.dto.UpdateCardRequest;
@@ -21,6 +23,7 @@ import reactor.core.publisher.Mono;
 public interface DeckService {
     Mono<DeckDto> createDeck(CreateDeckRequest request);
     Mono<DeckDto> addCardToDeck(String id, CardRequest request);
+    Mono<DeckDto> addCardsToDeck(String id, AddCardsRequest request);
     Mono<DeckDto> copyDeck(String id);
     Mono<DeckDto> fetchDeckById(String id);
     Mono<Boolean> deleteDeckById(String id);
@@ -39,4 +42,5 @@ public interface DeckService {
     Mono<DeckDto> importDeck(ImportDeckRequest request);
     Mono<String> exportDeck(String id);
     Mono<DeckAnalysisDto> validateImportedDeck(ImportValidateRequest request);
+    Mono<ImportCheckDto> checkImport(ImportValidateRequest request);
 }
