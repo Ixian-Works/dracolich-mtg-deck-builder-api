@@ -218,7 +218,10 @@ Stores the full structured AI response so cache hits skip the AI call entirely. 
 
 ## Stats Calculator
 
-`DeckStatsCalculator` is a pure-static helper computing:
+`DeckStatsCalculator` is a pure-static helper. Every number below counts **the main deck and the
+commanders**; an entry with no board counts as main deck. The sideboard is reported apart, in
+`sideboard` (`card_count`, `land_count`, `mana_curve`, `type_breakdown`), which is absent when the
+deck has none. The maybe board is never counted (Ixian-Works/dracolich-mtg-deck-builder-api#27).
 
 - `cardCount`, `landCount`
 - `manaCurve` (TreeMap<Integer, Integer>, non-lands only, bucketed by `cmc.intValue()`)
@@ -227,7 +230,7 @@ Stores the full structured AI response so cache hits skip the AI call entirely. 
 - `averageCmc` (mean of non-land CMCs, weighted, 2-decimal)
 - `warnings` (deterministic — low/high land ratio, high average CMC)
 
-Used by `/decks/{id}/stats`, `/decks/validate`, `/decks/import/validate`, AND the AI bridge (stats injected into prompts).
+Used by `/decks/{id}/stats`, `/decks/validate`, `/decks/import/validate`, AND the AI bridge (stats injected into prompts). The prompt says the numbers are the main deck's and, when there is a sideboard, says it isn't counted in them; the deck list sent to ai-api leaves out the maybe board.
 
 ## Deck Text Parser / Exporter
 

@@ -16,4 +16,17 @@ public record DeckStatsDto(
         @JsonProperty("color_pie") Map<Color, Double> colorPie,
         @JsonProperty("type_breakdown") Map<String, Integer> typeBreakdown,
         @JsonProperty("average_cmc") Double averageCmc,
-        List<String> warnings) { }
+        List<String> warnings,
+        SideboardStatsDto sideboard) {
+
+    /**
+     * The sideboard, counted apart from the main deck: none when the deck has no sideboard cards.
+     * The fields above count only the main deck and the commanders; the maybe board is never counted.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record SideboardStatsDto(
+            @JsonProperty("card_count") Integer cardCount,
+            @JsonProperty("land_count") Integer landCount,
+            @JsonProperty("mana_curve") Map<Integer, Integer> manaCurve,
+            @JsonProperty("type_breakdown") Map<String, Integer> typeBreakdown) { }
+}
