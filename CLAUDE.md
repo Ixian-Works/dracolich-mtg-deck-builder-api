@@ -67,7 +67,7 @@ Base path: `/dracolich/mtg-deck-builder/api/v0/`
 | POST | `/import/validate` (JSON) | NO | Validate + stats from text without persisting |
 | POST | `/import/validate` (text/plain) | NO | Same, raw body |
 | POST | `/{id}/cards` | OWNED | Add card to a deck the caller owns, into `card_category` (default MAINBOARD). If that board already holds the card, its count rises instead of a second entry appearing. Bumps `audit.lastModified`, invalidates AI cache. |
-| POST | `/{id}/copy` | YES | Copy a PUBLIC deck into the caller's account (sets `copiedFromId`, resets `favoritesCount`) |
+| POST | `/{id}/copy` | YES | Copy a deck the caller can read (by the `GET /{id}` rule: one's own whatever its visibility, anyone else's only if PUBLIC) into the caller's account. The copy is PRIVATE, keeps its name if it was someone else's and is `<name> (copy)` if it was the caller's own (`Untitled deck` when unnamed), keeps `copiedFromId`, resets `favoritesCount`, and has no AI session or cache. Guests get 401. |
 | POST | `/{id}/claim` | YES (USER) + anon cookie | Transfer anon-owned deck to the authenticated user. Verifies signed `dracolich_anon_id` cookie matches `deck.anonId`. 409 if already claimed (DMD036). |
 | GET | `/` | YES | Paginated list of caller's decks. Optional filters: `format`, `status`, `visibility` |
 | GET | `/popular` | NO | Public decks sorted by `favoritesCount` DESC. Optional `format` filter |

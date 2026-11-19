@@ -263,9 +263,12 @@ public class DeckServiceImpl implements DeckService {
         }
         Instant now = Instant.now();
 
+        // Whoever may read the deck may copy it: its owner whatever its visibility, anyone
+        // else only a public one, the same rule as GET /decks/{id}. The copy starts with
+        // no AI session and no AI cache, so the two decks never share a conversation.
         return repo.findById(id)
                 .switchIfEmpty(Mono.error(notFound("copy_deck", "deck", id)))
-                .filter(deck -> deck.getVisibility().equals(Visibility.PUBLIC))
+                .filter(deck -> canAccess(deck, principal))
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .map(source -> DeckEntity.builder()
                         .copiedFromId(source.getId())
@@ -274,16 +277,33 @@ public class DeckServiceImpl implements DeckService {
                                 .createdAt(now)
                                 .lastModified(now)
                                 .build())
-                        .name(source.getName())
+                        .name(copyName(source, principal))
                         .description(source.getDescription())
                         .format(source.getFormat())
                         .status(source.getStatus())
-                        .commander(source.getCommander())
-                        .cards(source.getCards())
+                        .commander(copyOf(source.getCommander()))
+                        .cards(copyOf(source.getCards()))
                         .visibility(Visibility.PRIVATE)
                         .favoritesCount(0L)
                     .build())
                 .doOnNext(DeckCards::refreshColors);
+    }
+
+    /**
+     * The copy's name. A duplicate of one's own deck is "<name> (copy)", so it doesn't sit beside
+     * the original under the same name; a copy of someone else's deck keeps its name, since it is
+     * the only one by that name in the copier's list. A deck with no name is "Untitled deck".
+     * Alia's layout on Ixian-Works/dracolich-mtg-ui#35, "What a copy is called".
+     */
+    static String copyName(DeckEntity source, Principal principal) {
+        String name = source.getName() == null || source.getName().isBlank() ? UNTITLED : source.getName();
+        return principal.id().equals(source.getUserId()) ? name + " (copy)" : name;
+    }
+
+    static final String UNTITLED = "Untitled deck";
+
+    private static List<DeckCardEntity> copyOf(List<DeckCardEntity> cards) {
+        return cards == null ? new ArrayList<>() : new ArrayList<>(cards);
     }
 
     private Mono<DeckEntity> buildFetchDeckByIdAndUserId(Principal principal, String id) {
