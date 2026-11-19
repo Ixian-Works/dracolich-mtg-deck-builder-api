@@ -56,7 +56,11 @@ public class FavoriteServiceImpl implements FavoriteService {
                 .switchIfEmpty(Mono.error(unauthorized()));
     }
 
-    /** The same rule as reading a deck: anyone may see a public deck, and only its owner a private one. */
+    /**
+     * Anyone may favorite a public deck; only its owner a private or unlisted one. Narrower than
+     * reading, which also opens an unlisted deck to anyone with its link: a favorite would put
+     * an unlisted deck in someone's Favorites list.
+     */
     private static boolean visibleTo(DeckEntity deck, Principal principal) {
         return deck.getVisibility() == Visibility.PUBLIC || principal.id().equals(deck.getUserId());
     }
