@@ -312,7 +312,7 @@ public class DeckController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Deck imported successfully",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
-            @ApiResponse(responseCode = "400", description = "Validation error",
+            @ApiResponse(responseCode = "400", description = "Validation error, or deck text longer than 20,000 characters (DMD050)",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
             @ApiResponse(responseCode = "401", description = "Unauthorized",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
@@ -334,6 +334,7 @@ public class DeckController {
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
             @ApiResponse(responseCode = "401", description = "Unauthorized",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "400", description = "Deck text longer than 20,000 characters (DMD050)"),
             @ApiResponse(responseCode = "422", description = "Import failed (per-line errors in response)",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
             @ApiResponse(responseCode = "503", description = "MTG Library unavailable",
@@ -368,7 +369,7 @@ public class DeckController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Analysis computed successfully",
                     content = @Content(schema = @Schema(implementation = DeckAnalysisDto.class))),
-            @ApiResponse(responseCode = "400", description = "Validation error",
+            @ApiResponse(responseCode = "400", description = "Validation error, or deck text longer than 20,000 characters (DMD050)",
                     content = @Content(schema = @Schema(implementation = DeckAnalysisDto.class))),
             @ApiResponse(responseCode = "422", description = "Import failed (per-line errors in response)",
                     content = @Content(schema = @Schema(implementation = DeckAnalysisDto.class))),
@@ -382,10 +383,11 @@ public class DeckController {
         return service.validateImportedDeck(request);
     }
 
-    @Operation(summary = "Check a pasted decklist", description = "Reads a pasted list line by line and never refuses it for its content. For every non-blank line: its number and text, and either the card it matched (count, board, card id and name), the board a heading switched to, or a reason code (NOT_A_CARD_LINE, COUNT_NOT_VALID, NO_SUCH_CARD, UNKNOWN_HEADING). With the format's rule problems and the statistics of the lines that matched. Saves nothing; works for a guest.")
+    @Operation(summary = "Check a pasted decklist", description = "Reads a pasted list line by line and never refuses it for its content. For every non-blank line: its number and text, and either the card it matched (count, board, card id and name), the board a heading switched to, or a reason code (NOT_A_CARD_LINE, COUNT_NOT_VALID, NO_SUCH_CARD, UNKNOWN_HEADING, LINE_TOO_LONG for a line over 200 characters). With the format's rule problems and the statistics of the lines that matched. Saves nothing; works for a guest. Text over 20,000 characters is refused.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "The lines, the rule problems and the statistics",
                     content = @Content(schema = @Schema(implementation = ImportCheckDto.class))),
+            @ApiResponse(responseCode = "400", description = "Deck text longer than 20,000 characters (DMD050)"),
             @ApiResponse(responseCode = "503", description = "MTG Library unavailable")
     })
     @PostMapping(path = {"/import/check"},
@@ -399,6 +401,7 @@ public class DeckController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Analysis computed successfully",
                     content = @Content(schema = @Schema(implementation = DeckAnalysisDto.class))),
+            @ApiResponse(responseCode = "400", description = "Deck text longer than 20,000 characters (DMD050)"),
             @ApiResponse(responseCode = "422", description = "Import failed (per-line errors in response)",
                     content = @Content(schema = @Schema(implementation = DeckAnalysisDto.class))),
             @ApiResponse(responseCode = "503", description = "MTG Library unavailable",
