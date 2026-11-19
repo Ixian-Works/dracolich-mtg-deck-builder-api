@@ -1,6 +1,8 @@
 package dm.dracolich.deckBuilder.web.controller;
 
 import dm.dracolich.deckBuilder.core.service.DeckService;
+import dm.dracolich.deckBuilder.dto.CardMoveRequest;
+import dm.dracolich.deckBuilder.dto.CardMoveResultDto;
 import dm.dracolich.deckBuilder.dto.CardRequest;
 import dm.dracolich.deckBuilder.dto.CreateDeckRequest;
 import dm.dracolich.deckBuilder.dto.DeckAnalysisDto;
@@ -8,6 +10,7 @@ import dm.dracolich.deckBuilder.dto.DeckDto;
 import dm.dracolich.deckBuilder.dto.DeckStatsDto;
 import dm.dracolich.deckBuilder.dto.DeckValidationDto;
 import dm.dracolich.deckBuilder.dto.ImportDeckRequest;
+import dm.dracolich.deckBuilder.dto.MakeCommanderRequest;
 import dm.dracolich.deckBuilder.dto.ImportValidateRequest;
 import dm.dracolich.deckBuilder.dto.UpdateCardRequest;
 import dm.dracolich.deckBuilder.dto.UpdateDeckRequest;
@@ -77,6 +80,34 @@ public class DeckController {
         return service.addCardToDeck(id, request);
     }
 
+    @Operation(summary = "Move cards between boards", description = "Several moves in one write: each moves count copies (every copy when absent) of the card's entry on from (the main deck when absent) to another board, merging with an entry already there. Applied together or not at all. The answer is the deck and the moves that merged into an existing entry, with that entry's count. At most 250 moves.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "The deck after the moves, and what merged",
+                    content = @Content(schema = @Schema(implementation = CardMoveResultDto.class))),
+            @ApiResponse(responseCode = "400", description = "An invalid move, such as more copies than the board holds or a move to the same board (DMD044)"),
+            @ApiResponse(responseCode = "401", description = "Not the deck's owner"),
+            @ApiResponse(responseCode = "404", description = "The deck, or a card on the board named, doesn't exist (DMD033)"),
+            @ApiResponse(responseCode = "409", description = "The deck kept changing under the write (DMD048)")
+    })
+    @PostMapping(path = {"/{id}/cards/moves"}, produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<CardMoveResultDto> moveCards(@PathVariable String id, @Valid @RequestBody CardMoveRequest request) {
+        return service.moveCards(id, request);
+    }
+
+    @Operation(summary = "Make a card the commander", description = "One copy of a card in the deck leaves its board (card_category, the main deck when absent) and becomes the deck's commander, or its second commander, in one write. A deck has at most two commanders.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "The deck with its new commander",
+                    content = @Content(schema = @Schema(implementation = DeckDto.class))),
+            @ApiResponse(responseCode = "400", description = "The deck has two commanders already, or the card is one (DMD044)"),
+            @ApiResponse(responseCode = "401", description = "Not the deck's owner"),
+            @ApiResponse(responseCode = "404", description = "The deck, or the card on that board, doesn't exist (DMD033)"),
+            @ApiResponse(responseCode = "409", description = "The deck kept changing under the write (DMD048)")
+    })
+    @PostMapping(path = {"/{id}/commander"}, produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<DeckDto> makeCommander(@PathVariable String id, @Valid @RequestBody MakeCommanderRequest request) {
+        return service.makeCommander(id, request);
+    }
+
     @Operation(summary = "Update deck metadata", description = "Update deck metadata (name, description, format, status, visibility) and the commanders (commander_ids: one, or two for partners; an empty list removes them). Only non-null fields are applied. Anon owners cannot promote a deck off PRIVATE.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Deck updated successfully",
@@ -96,7 +127,7 @@ public class DeckController {
         return service.updateDeck(id, request);
     }
 
-    @Operation(summary = "Update a card in a deck", description = "Change the count of the card's entry in the ?category= board (default MAINBOARD), move it to the board in the body's card_category, or both. Moving into a board that already holds the card merges the two entries. To remove the card, use DELETE.")
+    @Operation(summary = "Update a card in a deck", description = "Change the count of the card's entry in the ?category= board (default MAINBOARD), move it to the board in the body's card_category, or both. Moving into a board that already holds the card merges the two entries. With move_count and card_category, only that many copies move and the rest stay; move_count can't be given with count. To remove the card, use DELETE.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Card updated successfully",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
