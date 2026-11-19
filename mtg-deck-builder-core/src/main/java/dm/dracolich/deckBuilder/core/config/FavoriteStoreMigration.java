@@ -29,8 +29,9 @@ import java.util.stream.Collectors;
  * <p>At startup, before the application reports itself ready: it creates the indexes favorites rely
  * on, then for each old document makes a favorite of every deck in it at one time, the migration's,
  * so they sort together after anything newer, and removes the document. A player's favorite of their
- * own deck isn't carried over. Last, it sets the count of every deck it touched to the number of its
- * favorites, so a count that included one's own favorite, or had drifted, is right again.</p>
+ * own deck, or of a deck that no longer exists, isn't carried over. Last, it sets the count of every
+ * deck it touched to the number of its favorites, so a count that included one's own favorite, or had
+ * drifted, is right again.</p>
  *
  * <p>It can stop and start again: a favorite made twice is one favorite, and each old document is
  * removed only once its favorites exist. With nothing left in {@code favorites} it only checks the
@@ -72,11 +73,10 @@ public class FavoriteStoreMigration implements ApplicationRunner {
         List<String> deckIds = old.getList("deckIds", String.class, List.of());
         return Flux.fromIterable(deckIds)
                 .concatMap(deckId -> decks.findById(deckId)
-                        .map(deck -> deck.getUserId() == null ? "" : deck.getUserId())
-                        .defaultIfEmpty("")
-                        .flatMap(owner -> userId == null || owner.equals(userId)
-                                ? Mono.just(deckId)
-                                : favorites.addDeck(userId, deckId, at).thenReturn(deckId)))
+                        // A deck that no longer exists, or the player's own, isn't carried over.
+                        .filter(deck -> userId != null && !userId.equals(deck.getUserId()))
+                        .flatMap(deck -> favorites.addDeck(userId, deckId, at))
+                        .thenReturn(deckId))
                 .collectList()
                 .flatMapMany(named -> mongoTemplate
                         .remove(Query.query(Criteria.where("_id").is(old.get("_id"))), OLD_COLLECTION)

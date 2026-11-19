@@ -149,7 +149,7 @@ class FavoritesStoreTest {
     }
 
     @Test
-    void theMigrationMovesOldRowsDropsOwnDeckFavoritesAndFixesTheCounts() {
+    void theMigrationMovesOldRowsDropsOwnAndDeletedDeckFavoritesAndFixesTheCounts() {
         // Rows made the old way: one document per player with a set of deck ids. Counts as the
         // old code left them, own favorites included, plus one that had drifted.
         deck("alices", "alice", Visibility.PUBLIC, 2);   // favorited by alice herself and bob
@@ -164,7 +164,8 @@ class FavoritesStoreTest {
         assertThat(template.count(new Query(), "favorites").block(WAIT)).isZero();
         List<FavoriteEntity> made = template.findAll(FavoriteEntity.class).collectList().block(WAIT);
         assertThat(made).extracting(f -> f.getUserId() + "->" + f.getDeckId())
-                .containsExactlyInAnyOrder("alice->carols", "bob->alices", "bob->carols", "bob->gone");
+                .containsExactlyInAnyOrder("alice->carols", "bob->alices", "bob->carols");
+        // "gone" names a deck that no longer exists: not carried over.
         assertThat(made).allSatisfy(f -> assertThat(f.getFavoritedAt()).isEqualTo(at));
         assertThat(decks.findById("alices").block(WAIT).getFavoritesCount()).isEqualTo(1L);
         assertThat(decks.findById("bobs").block(WAIT).getFavoritesCount()).isZero();
@@ -172,7 +173,7 @@ class FavoritesStoreTest {
 
         // Run again, as at the next start: nothing changes.
         migration.migrate(at.plusSeconds(3600)).block(WAIT);
-        assertThat(template.findAll(FavoriteEntity.class).collectList().block(WAIT)).hasSize(4);
+        assertThat(template.findAll(FavoriteEntity.class).collectList().block(WAIT)).hasSize(3);
         assertThat(decks.findById("carols").block(WAIT).getFavoritesCount()).isEqualTo(2L);
     }
 

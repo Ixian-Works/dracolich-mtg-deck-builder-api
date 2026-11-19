@@ -190,8 +190,8 @@ an entry in a per-player list because:
 
 `FavoriteStoreMigration` creates the three indexes at startup. It also moves anything left in the old
 `favorites` collection, one document per player with a `deckIds` set. Those favorites get the
-migration's time, so they sort together after anything newer. Favorites of one's own deck are
-dropped, and every deck it touched gets `favorites_count` set to its number of favorites. It can be
+migration's time, so they sort together after anything newer. Favorites of one's own deck, and of
+a deck that no longer exists, are dropped, and every deck it touched gets `favorites_count` set to its number of favorites. It can be
 interrupted and run again. Deck-side `favoritesCount` is the denormalized counter for popular-deck
 queries.
 
