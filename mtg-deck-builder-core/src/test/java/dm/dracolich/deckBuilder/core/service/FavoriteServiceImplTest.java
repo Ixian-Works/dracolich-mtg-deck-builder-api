@@ -7,16 +7,22 @@ import dm.dracolich.deckBuilder.dto.enums.Visibility;
 import dm.dracolich.forge.exception.ResponseException;
 import dm.dracolich.forge.security.Principal;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Instant;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -27,7 +33,7 @@ import static org.mockito.Mockito.when;
 /**
  * The favorites rules, with the repositories' atomic operations mocked. The fake below keeps a real set
  * and a real counter, so a sequence of calls can be checked for the invariant "count equals the number
- * of players with the deck in their set".
+ * of players who have favorited it". A player can't favorite their own deck.
  */
 class FavoriteServiceImplTest {
 
@@ -47,7 +53,7 @@ class FavoriteServiceImplTest {
     }
 
     private void fakeAtomicOperations() {
-        when(favorites.addDeck(anyString(), anyString()))
+        when(favorites.addDeck(anyString(), anyString(), any(Instant.class)))
                 .thenAnswer(i -> Mono.fromSupplier(() -> playersWithDeck.add(i.getArgument(0))));
         when(favorites.removeDeck(anyString(), anyString()))
                 .thenAnswer(i -> Mono.fromSupplier(() -> playersWithDeck.remove(i.<String>getArgument(0))));
@@ -105,7 +111,7 @@ class FavoriteServiceImplTest {
                 .expectErrorSatisfies(e -> assertError(e, HttpStatus.NOT_FOUND, "DMD033"))
                 .verify();
 
-        verify(favorites, never()).addDeck(anyString(), anyString());
+        verify(favorites, never()).addDeck(anyString(), anyString(), any(Instant.class));
         verify(decks, never()).changeFavoritesCount(anyString(), anyInt());
     }
 
@@ -117,7 +123,7 @@ class FavoriteServiceImplTest {
                 .expectErrorSatisfies(e -> assertError(e, HttpStatus.UNAUTHORIZED, "DMD034"))
                 .verify();
 
-        verify(favorites, never()).addDeck(anyString(), anyString());
+        verify(favorites, never()).addDeck(anyString(), anyString(), any(Instant.class));
     }
 
     @Test
@@ -129,14 +135,35 @@ class FavoriteServiceImplTest {
                 .verify();
     }
 
-    @Test
-    void theOwnerMayFavoriteTheirOwnPrivateDeck() {
-        deckIs(Visibility.PRIVATE);
+    @ParameterizedTest
+    @EnumSource(Visibility.class)
+    void theOwnerCannotFavoriteTheirOwnDeck(Visibility visibility) {
+        deckIs(visibility);
         fakeAtomicOperations();
 
-        StepVerifier.create(as(Principal.user(OWNER), service.favoriteDeck(DECK))).expectNext(true).verifyComplete();
+        StepVerifier.create(as(Principal.user(OWNER), service.favoriteDeck(DECK)))
+                .expectErrorSatisfies(e -> assertError(e, HttpStatus.BAD_REQUEST, "DMD049"))
+                .verify();
 
-        assertThat(count).isEqualTo(1);
+        verify(favorites, never()).addDeck(anyString(), anyString(), any(Instant.class));
+        assertThat(count).isZero();
+    }
+
+    @Test
+    void theIdsReadIsTheSignedInPlayersOwnNewestFirstUpToTheCap() {
+        when(favorites.deckIdsNewestFirst("a", FavoriteService.FAVORITE_IDS_LIMIT))
+                .thenReturn(Flux.just("deck-3", "deck-2", "deck-1"));
+
+        StepVerifier.create(as(Principal.user("a"), service.myFavoriteIds()))
+                .expectNext(List.of("deck-3", "deck-2", "deck-1"))
+                .verifyComplete();
+    }
+
+    @Test
+    void aGuestHasNoFavoriteIds() {
+        StepVerifier.create(as(Principal.anon("anon-1"), service.myFavoriteIds()))
+                .expectErrorSatisfies(e -> assertError(e, HttpStatus.UNAUTHORIZED, "DMD034"))
+                .verify();
     }
 
     @Test

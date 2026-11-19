@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 
+import java.util.List;
 import java.util.Set;
 
 public interface DeckCustomRepository {
@@ -27,6 +28,12 @@ public interface DeckCustomRepository {
     Mono<Page<DeckEntity>> findPublicDecksByUserId(String userId, Format format, int page, int size);
 
     Mono<Page<DeckEntity>> findPublicDecksByIds(Set<String> deckIds, int page, int size);
+
+    /**
+     * A page of the public decks among {@code orderedIds}, in that order. Ids that aren't a public
+     * deck, deleted or no longer public, are skipped and not counted.
+     */
+    Mono<Page<DeckEntity>> findPublicDecksInOrder(List<String> orderedIds, int page, int size);
 
     /**
      * Moves the deck's favorites counter by {@code delta} with a single {@code $inc}, touching no other
