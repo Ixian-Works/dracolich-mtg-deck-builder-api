@@ -13,6 +13,7 @@ import dm.dracolich.deckBuilder.data.entity.DeckEntity;
 import dm.dracolich.deckBuilder.data.repository.DeckRepository;
 import dm.dracolich.deckBuilder.dto.DeckAiResultDto;
 import dm.dracolich.deckBuilder.dto.DeckStatsDto;
+import dm.dracolich.deckBuilder.dto.enums.CardCategory;
 import dm.dracolich.deckBuilder.integration.DracolichAiClient;
 import dm.dracolich.forge.security.Principal;
 import dm.dracolich.forge.security.ReactiveSecurityContextUtil;
@@ -139,7 +140,8 @@ public class DeckAiServiceImpl implements DeckAiService {
      */
     private static String deckContext(DeckEntity deck) {
         DeckStatsDto stats = DeckStatsCalculator.compute(deck);
-        StringBuilder sb = new StringBuilder("Pre-computed deck stats (use these instead of estimating):\n");
+        StringBuilder sb = new StringBuilder(
+                "Pre-computed deck stats for the main deck and commanders (use these instead of estimating):\n");
         List<String> commanderNames = commanders(deck).stream().map(DeckCardEntity::getName).toList();
         if (!commanderNames.isEmpty()) {
             sb.append(commanderNames.size() == 1 ? "- Commander: " : "- Commanders: ")
@@ -161,6 +163,10 @@ public class DeckAiServiceImpl implements DeckAiService {
         }
         if (stats.warnings() != null && !stats.warnings().isEmpty()) {
             sb.append("- Pre-computed warnings: ").append(String.join("; ", stats.warnings())).append("\n");
+        }
+        if (stats.sideboard() != null) {
+            sb.append("- Sideboard: ").append(stats.sideboard().cardCount())
+                    .append(" cards, listed in the deck list and not counted in any number above\n");
         }
         return sb.toString();
     }
@@ -213,7 +219,8 @@ public class DeckAiServiceImpl implements DeckAiService {
     }
 
     /**
-     * The whole deck as ai-api takes it: the commanders first, then every other card. The
+     * The deck as ai-api takes it: the commanders first, then the main deck and the sideboard, each
+     * card with its board; the maybe board is left out. The
      * commanders live in their own list on the deck, so they are added here, flagged. ai-api
      * reads the commander and the colour identity of an ANALYSIS session from that flag alone.
      */
@@ -223,6 +230,8 @@ public class DeckAiServiceImpl implements DeckAiService {
             list.add(new DeckCardRequest(commander.getName(), "COMMANDER", 1, true));
         }
         for (DeckCardEntity card : cards(deck)) {
+            // The maybe board is cards the player hasn't put in the deck, so the assistant doesn't see it.
+            if (card.getCardCategory() == CardCategory.MAYBE_BOARD) continue;
             list.add(new DeckCardRequest(
                     card.getName(),
                     card.getCardCategory() != null ? card.getCardCategory().name() : "MAINBOARD",

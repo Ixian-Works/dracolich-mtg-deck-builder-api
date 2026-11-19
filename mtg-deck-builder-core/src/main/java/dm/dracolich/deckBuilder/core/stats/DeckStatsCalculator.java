@@ -3,6 +3,7 @@ package dm.dracolich.deckBuilder.core.stats;
 import dm.dracolich.deckBuilder.data.entity.DeckCardEntity;
 import dm.dracolich.deckBuilder.data.entity.DeckEntity;
 import dm.dracolich.deckBuilder.dto.DeckStatsDto;
+import dm.dracolich.deckBuilder.dto.enums.CardCategory;
 import dm.dracolich.mtgLibrary.dto.enums.Color;
 
 import java.util.ArrayList;
@@ -10,6 +11,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -28,15 +30,20 @@ public final class DeckStatsCalculator {
     private DeckStatsCalculator() {
     }
 
+    /**
+     * The deck's statistics. The totals, the curve, the colours, the types, the average and the
+     * warnings count the main deck and the commanders; an entry saved without a board is main deck.
+     * The sideboard is reported apart, and the maybe board is never counted.
+     */
     public static DeckStatsDto compute(DeckEntity deck) {
-        List<DeckCardEntity> all = allCards(deck);
+        List<DeckCardEntity> main = mainDeck(deck);
 
-        int cardCount = totalCount(all);
-        int landCount = countWhere(all, DeckStatsCalculator::isLand);
-        Map<Integer, Integer> manaCurve = manaCurve(all);
-        Map<Color, Double> colorPie = colorPie(all);
-        Map<String, Integer> typeBreakdown = typeBreakdown(all);
-        Double averageCmc = averageCmc(all);
+        int cardCount = totalCount(main);
+        int landCount = countWhere(main, DeckStatsCalculator::isLand);
+        Map<Integer, Integer> manaCurve = manaCurve(main);
+        Map<Color, Double> colorPie = colorPie(main);
+        Map<String, Integer> typeBreakdown = typeBreakdown(main);
+        Double averageCmc = averageCmc(main);
         List<String> warnings = warnings(deck, cardCount, landCount, averageCmc);
 
         return new DeckStatsDto(
@@ -47,14 +54,35 @@ public final class DeckStatsCalculator {
                 colorPie,
                 typeBreakdown,
                 averageCmc,
-                warnings);
+                warnings,
+                sideboard(deck));
     }
 
-    private static List<DeckCardEntity> allCards(DeckEntity deck) {
-        List<DeckCardEntity> all = new ArrayList<>();
-        if (deck.getCommander() != null) all.addAll(deck.getCommander());
-        if (deck.getCards() != null) all.addAll(deck.getCards());
-        return all;
+    /** The commanders, and every card on the main deck or on no board. */
+    public static List<DeckCardEntity> mainDeck(DeckEntity deck) {
+        List<DeckCardEntity> main = new ArrayList<>();
+        if (deck.getCommander() != null) deck.getCommander().stream().filter(Objects::nonNull).forEach(main::add);
+        if (deck.getCards() != null) {
+            deck.getCards().stream()
+                    .filter(Objects::nonNull)
+                    .filter(c -> c.getCardCategory() == null || c.getCardCategory() == CardCategory.MAINBOARD)
+                    .forEach(main::add);
+        }
+        return main;
+    }
+
+    private static DeckStatsDto.SideboardStatsDto sideboard(DeckEntity deck) {
+        if (deck.getCards() == null) return null;
+        List<DeckCardEntity> side = deck.getCards().stream()
+                .filter(Objects::nonNull)
+                .filter(c -> c.getCardCategory() == CardCategory.SIDEBOARD)
+                .toList();
+        if (side.isEmpty()) return null;
+        return new DeckStatsDto.SideboardStatsDto(
+                totalCount(side),
+                countWhere(side, DeckStatsCalculator::isLand),
+                manaCurve(side),
+                typeBreakdown(side));
     }
 
     private static int totalCount(List<DeckCardEntity> cards) {

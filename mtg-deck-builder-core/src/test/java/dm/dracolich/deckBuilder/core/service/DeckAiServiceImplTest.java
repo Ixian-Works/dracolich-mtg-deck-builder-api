@@ -158,6 +158,28 @@ class DeckAiServiceImplTest {
     }
 
     @Test
+    void theAssistantGetsTheMainDecksNumbersSeesTheSideboardAndNotTheMaybeBoard() {
+        DeckEntity deck = modernDeck();
+        DeckCardEntity negate = card("Negate", "Instant", 2.0, 2);
+        negate.setCardCategory(CardCategory.SIDEBOARD);
+        DeckCardEntity shock = card("Shock", "Instant", 1.0, 4);
+        shock.setCardCategory(CardCategory.MAYBE_BOARD);
+        deck.getCards().addAll(List.of(negate, shock));
+        deckExists(deck);
+
+        StepVerifier.create(asOwner(service.analyzeDeck(DECK_ID)))
+                .expectNextCount(1)
+                .verifyComplete();
+
+        // The same numbers as the deck's statistics: 4 Bolts and 20 Mountains.
+        assertThat(onlyChatMessage())
+                .contains("- Total cards: 24\n")
+                .contains("- Mana curve (CMC: count): {1=4}\n")
+                .contains("- Sideboard: 2 cards, listed in the deck list and not counted in any number above\n");
+        assertThat(cardNames(onlySessionRequest())).containsExactly("Lightning Bolt", "Mountain", "Negate");
+    }
+
+    @Test
     void aDeckWithNoCommanderSaysNothingAboutOne() {
         deckExists(modernDeck());
 
