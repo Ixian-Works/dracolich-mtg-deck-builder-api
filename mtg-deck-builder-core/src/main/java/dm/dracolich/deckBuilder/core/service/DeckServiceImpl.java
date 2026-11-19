@@ -277,7 +277,7 @@ public class DeckServiceImpl implements DeckService {
                                 .createdAt(now)
                                 .lastModified(now)
                                 .build())
-                        .name(copyName(source.getName()))
+                        .name(copyName(source, principal))
                         .description(source.getDescription())
                         .format(source.getFormat())
                         .status(source.getStatus())
@@ -289,16 +289,24 @@ public class DeckServiceImpl implements DeckService {
                 .doOnNext(DeckCards::refreshColors);
     }
 
-/** The copy's name says it is one, so it never sits beside the original under the same name. */
-    static String copyName(String name) {
-        return (name == null || name.isBlank() ? "Deck" : name) + " (copy)";
+    /**
+     * The copy's name. A duplicate of one's own deck is "<name> (copy)", so it doesn't sit beside
+     * the original under the same name; a copy of someone else's deck keeps its name, since it is
+     * the only one by that name in the copier's list. A deck with no name is "Untitled deck".
+     * Alia's layout on Ixian-Works/dracolich-mtg-ui#35, "What a copy is called".
+     */
+    static String copyName(DeckEntity source, Principal principal) {
+        String name = source.getName() == null || source.getName().isBlank() ? UNTITLED : source.getName();
+        return principal.id().equals(source.getUserId()) ? name + " (copy)" : name;
     }
+
+    static final String UNTITLED = "Untitled deck";
 
     private static List<DeckCardEntity> copyOf(List<DeckCardEntity> cards) {
         return cards == null ? new ArrayList<>() : new ArrayList<>(cards);
     }
 
-        private Mono<DeckEntity> buildFetchDeckByIdAndUserId(Principal principal, String id) {
+    private Mono<DeckEntity> buildFetchDeckByIdAndUserId(Principal principal, String id) {
         return repo.findById(id)
                 .switchIfEmpty(Mono.error(notFound("fetch_deck_by_id", "id", id)))
                 .filter(deck -> canAccess(deck, principal))

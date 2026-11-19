@@ -62,6 +62,8 @@ class DeckServiceImplCopyTest {
         DeckEntity copy = saved();
         assertThat(copy.getUserId()).isEqualTo(OWNER);
         assertThat(copy.getVisibility()).isEqualTo(Visibility.PRIVATE);
+        // A duplicate of one's own deck says it is one.
+        assertThat(copy.getName()).isEqualTo("Mono Red (copy)");
     }
 
     @Test
@@ -78,7 +80,8 @@ class DeckServiceImplCopyTest {
         assertThat(copy.getAnonId()).isNull();
         assertThat(copy.getCopiedFromId()).isEqualTo(DECK_ID);
         assertThat(copy.getVisibility()).isEqualTo(Visibility.PRIVATE);
-        assertThat(copy.getName()).isEqualTo("Mono Red (copy)");
+        // A copy of someone else's deck keeps its name: it is the only one by that name in the copier's list.
+        assertThat(copy.getName()).isEqualTo("Mono Red");
         assertThat(copy.getFavoritesCount()).isZero();
         assertThat(copy.getAiSessionId()).isNull();
         assertThat(copy.getAiCache()).isNull();
@@ -122,9 +125,12 @@ class DeckServiceImplCopyTest {
     }
 
     @Test
-    void aDeckWithNoNameIsCopiedAsDeckCopy() {
-        assertThat(DeckServiceImpl.copyName(null)).isEqualTo("Deck (copy)");
-        assertThat(DeckServiceImpl.copyName("  ")).isEqualTo("Deck (copy)");
+    void aDeckWithNoNameIsAnUntitledDeck() {
+        DeckEntity unnamed = DeckEntity.builder().userId(OWNER).name("  ").build();
+        assertThat(DeckServiceImpl.copyName(unnamed, Principal.user(OWNER))).isEqualTo("Untitled deck (copy)");
+        assertThat(DeckServiceImpl.copyName(unnamed, Principal.user(OTHER))).isEqualTo("Untitled deck");
+        unnamed.setName(null);
+        assertThat(DeckServiceImpl.copyName(unnamed, Principal.user(OTHER))).isEqualTo("Untitled deck");
     }
 
     private DeckEntity deck(Visibility visibility) {

@@ -136,7 +136,7 @@ public class DeckController {
         return service.claimDeck(id, cookieAnonId);
     }
 
-    @Operation(summary = "Copy deck", description = "Copy a deck into the caller's account: one's own deck whatever its visibility, anyone else's only if public. The copy is private, named \"<name> (copy)\", keeps copied_from_id, and has no AI session or cache. Guests are refused.")
+    @Operation(summary = "Copy deck", description = "Copy a deck into the caller's account: one's own deck whatever its visibility, anyone else's only if public. The copy is private; a duplicate of one's own deck is named \"<name> (copy)\" and a copy of someone else's keeps its name. It keeps copied_from_id, and has no AI session or cache. Guests are refused.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Deck copied successfully",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
