@@ -121,7 +121,7 @@ class FavoriteServiceImplTest {
     }
 
     @Test
-    void anotherPlayersUnlistedDeckIsRefusedLikeOnRead() {
+    void anotherPlayersUnlistedDeckCannotBeFavoritedSoItStaysOutOfEveryList() {
         deckIs(Visibility.UNLISTED);
 
         StepVerifier.create(as(Principal.user("a"), service.favoriteDeck(DECK)))
