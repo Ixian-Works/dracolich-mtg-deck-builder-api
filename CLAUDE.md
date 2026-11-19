@@ -259,8 +259,15 @@ Reason codes (`ImportLineReason`), for a line not read as a card or a board head
 | `COUNT_NOT_VALID` | A count of 0, or too large | `0 Lightning Bolt` |
 | `NO_SUCH_CARD` | A card line whose name the library doesn't have (`/import/check` only, with `name_as_read`) | `1 Not A Card` |
 | `UNKNOWN_HEADING` | A heading that names no board; it changes nothing | `Companion`, `About`, `Name My deck`, `Lands (36)`, any other `// …` line |
+| `LINE_TOO_LONG` | Longer than 200 characters; not read at all | |
 
-`/import/check` reports every line this way and never refuses. `/import` and `/import/validate` stay
+**Limits.** Pasted text over 20,000 characters is refused before it's read, on every paste
+endpoint (400, DMD050), and a line over 200 characters is `LINE_TOO_LONG` before any pattern is
+tried on it (`DeckTextParser.MAX_TEXT_LENGTH`, `MAX_LINE_LENGTH`). Either holds any real list. The
+parser's patterns are written so no two neighbouring parts match the same character, and headings
+and name suffixes are read by plain string code, so a line is read in one pass.
+
+`/import/check` reports every line this way and never refuses. Its only refusal is the size limit. `/import` and `/import/validate` stay
 strict: any line with a reason other than `UNKNOWN_HEADING`, or a name the library doesn't have, fails
 the whole list with 422 and DMD035, one error per line. The app creates a pasted deck through
 `POST /decks` with the ids the check returned, or adds to one through `/{id}/cards/batch`.
@@ -327,6 +334,7 @@ Shared `paginated(criteria, page, size, sort)` helper does the count + find + `P
 | DMD036 | Deck already claimed (returns 409) |
 | DMD044 | Invalid deck change, such as a count below 1 or more than two commanders (returns 400) |
 | DMD048 | The deck was changed by other requests three times in a row during an edit (returns 409) |
+| DMD050 | Pasted deck text longer than 20,000 characters (returns 400) |
 | DMD040 | ai-api rejected the request (422 and 429 pass through; any other 4xx returns 502) |
 | DMD041 | ai-api unavailable (returns 503) |
 | DMD042 | The deck has no cards to send to the AI (returns 422) |

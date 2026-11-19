@@ -31,20 +31,23 @@ import java.util.regex.Pattern;
  */
 public final class DeckTextParser {
 
-    /** "4 Name", "4x Name", "4 x Name". The x needs a space after it, so "4 Xenagos" stays a name. */
-    private static final Pattern COUNTED = Pattern.compile("^(\\d+)(?:\\s*[xX])?\\s+(.+)$");
+    /** Longer pasted text is refused before it's read (400, DMD050). */
+    public static final int MAX_TEXT_LENGTH = 20_000;
+
+    /** A longer line is reported as {@code LINE_TOO_LONG} before any pattern is tried on it. */
+    public static final int MAX_LINE_LENGTH = 200;
+
+    // No two neighbouring parts of these patterns can match the same character, so a line that
+    // doesn't match is given up in time proportional to its length.
+
+    /**
+     * "4 Name", "4x Name", "4 x Name". The x needs a space after it, so "4 Xenagos" stays a name.
+     * The optional part either starts with the x or with spaces that end at an x.
+     */
+    private static final Pattern COUNTED = Pattern.compile("^(\\d+)(?:[xX]|\\s+[xX])?\\s+(\\S.*)$");
 
     /** "SB: 2 Negate", "SB:2 Negate", "sb: Negate". */
-    private static final Pattern SIDEBOARD_PREFIX = Pattern.compile("^[sS][bB]:\\s*(.*)$");
-
-    /** A trailing colon, or a count in brackets, after a heading: "Sideboard:", "Deck (60)", "Main [60]". */
-    private static final Pattern HEADING_DECORATION = Pattern.compile("\\s*(?::|\\(\\s*\\d+\\s*\\)|\\[\\s*\\d+\\s*])\\s*$");
-
-    /** A word or two and a count in brackets, the way type groups are written: "Lands (36)". */
-    private static final Pattern GROUP_HEADING = Pattern.compile("^[\\p{L} ]+\\s*[(\\[]\\s*\\d+\\s*[)\\]]$");
-
-    /** After a card name: a set and number in brackets, or a foil or other mark starting with '*'. */
-    private static final Pattern NAME_SUFFIX = Pattern.compile("\\s*(?:\\(.*|\\[.*|\\*.*)$");
+    private static final Pattern SIDEBOARD_PREFIX = Pattern.compile("^[sS][bB]:(.*)$");
 
     private static final Map<String, Section> HEADINGS = Map.ofEntries(
             Map.entry("deck", Section.MAINBOARD),
@@ -62,7 +65,7 @@ public final class DeckTextParser {
             Map.entry("maybe board", Section.MAYBEBOARD));
 
     /** Lines other products write above or between sections that name no board. */
-    private static final Pattern METADATA_LINE = Pattern.compile("^(?:about|companion|name\\s+.*|tokens?)$",
+    private static final Pattern METADATA_LINE = Pattern.compile("^(?:about|companion|name\\s.*|tokens?)$",
             Pattern.CASE_INSENSITIVE);
 
     private DeckTextParser() {
@@ -78,6 +81,10 @@ public final class DeckTextParser {
         for (int i = 0; i < lines.length; i++) {
             int lineNumber = i + 1;
             String raw = lines[i];
+            if (raw.length() > MAX_LINE_LENGTH) {
+                result.add(ParsedLine.unread(lineNumber, raw, current, ImportLineReason.LINE_TOO_LONG));
+                continue;
+            }
             String trimmed = raw.strip();
             if (trimmed.isEmpty()) continue;
 
@@ -134,7 +141,7 @@ public final class DeckTextParser {
         } else if (text.chars().allMatch(Character::isDigit)) {
             return ParsedLine.unread(lineNumber, raw, section, ImportLineReason.NOT_A_CARD_LINE);
         }
-        name = NAME_SUFFIX.matcher(name).replaceFirst("").strip();
+        name = withoutSuffix(name).strip();
         if (name.isEmpty() || name.chars().noneMatch(Character::isLetterOrDigit)) {
             return ParsedLine.unread(lineNumber, raw, section, ImportLineReason.NOT_A_CARD_LINE);
         }
@@ -146,11 +153,47 @@ public final class DeckTextParser {
 
     /** The board a heading names, or null. Case, a trailing colon and a count in brackets don't matter. */
     private static Section board(String heading) {
-        String key = HEADING_DECORATION.matcher(heading.strip()).replaceFirst("").strip().toLowerCase(Locale.ROOT);
-        return HEADINGS.get(key);
+        return HEADINGS.get(withoutDecoration(heading.strip()).toLowerCase(Locale.ROOT));
     }
 
-    private static boolean looksLikeHeading(String line) {
-        return line.endsWith(":") || GROUP_HEADING.matcher(line).matches() || METADATA_LINE.matcher(line).matches();
+    /** "Sideboard:" and "Deck (60)" and "Main [60]" without the colon or the bracketed count. */
+    static String withoutDecoration(String heading) {
+        String text = heading.strip();
+        if (text.endsWith(":")) return text.substring(0, text.length() - 1).strip();
+        char last = text.isEmpty() ? ' ' : text.charAt(text.length() - 1);
+        if (last == ')' || last == ']') {
+            int open = text.lastIndexOf(last == ')' ? '(' : '[');
+            String inside = open < 0 ? "" : text.substring(open + 1, text.length() - 1).strip();
+            if (!inside.isEmpty() && inside.chars().allMatch(Character::isDigit)) {
+                return text.substring(0, open).strip();
+            }
+        }
+        return text;
+    }
+
+    /** A card name without what follows it: a set and number in brackets, or a foil or other mark. */
+    static String withoutSuffix(String name) {
+        int cut = name.length();
+        for (char mark : new char[]{'(', '[', '*'}) {
+            int at = name.indexOf(mark);
+            if (at >= 0 && at < cut) cut = at;
+        }
+        return name.substring(0, cut);
+    }
+
+    static boolean looksLikeHeading(String line) {
+        return line.endsWith(":") || isGroupHeading(line) || METADATA_LINE.matcher(line).matches();
+    }
+
+    /**
+     * Words and a count in brackets, the way type groups are written: "Lands (36)", "Creatures [20]".
+     * Read by hand, not by a pattern, so a long line costs one pass.
+     */
+    static boolean isGroupHeading(String line) {
+        String text = line.strip();
+        if (!(text.endsWith(")") || text.endsWith("]"))) return false;
+        String words = withoutDecoration(text);
+        if (words.equals(text) || words.isEmpty()) return false;
+        return words.chars().allMatch(c -> Character.isLetter(c) || c == ' ');
     }
 }

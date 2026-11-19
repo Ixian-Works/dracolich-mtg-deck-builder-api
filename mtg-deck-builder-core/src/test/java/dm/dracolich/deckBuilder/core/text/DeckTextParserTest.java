@@ -10,10 +10,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 class DeckTextParserTest {
 
@@ -158,5 +160,39 @@ class DeckTextParserTest {
 
     private static DeckCardEntity card(String name, int count, CardCategory category) {
         return DeckCardEntity.builder().cardId(name).name(name).count(count).cardCategory(category).build();
+    }
+
+    @Test
+    void aLineOverTheLimitIsUnreadAndRefusesTheStrictImport() {
+        String line = "1 " + "a".repeat(DeckTextParser.MAX_LINE_LENGTH);
+        ParsedLine parsed = only(line);
+        assertThat(parsed.kind()).isEqualTo(Kind.UNREAD);
+        assertThat(parsed.reason()).isEqualTo(ImportLineReason.LINE_TOO_LONG);
+        assertThat(parsed.refusesStrictImport()).isTrue();
+        // At the limit it is still read.
+        assertThat(only("1 " + "a".repeat(DeckTextParser.MAX_LINE_LENGTH - 2)).kind()).isEqualTo(Kind.CARD);
+    }
+
+    @Test
+    void aVeryLongLineOfLettersAndSpacesComesBackQuicklyAsUnread() {
+        String line = "Lands ".repeat(20_000);
+        assertTimeoutPreemptively(Duration.ofSeconds(1), () -> {
+            ParsedLine parsed = only(line);
+            assertThat(parsed.reason()).isEqualTo(ImportLineReason.LINE_TOO_LONG);
+        });
+    }
+
+    @Test
+    void thePatternsGiveUpQuicklyEvenPastTheLineLimit() {
+        // Past the limit nothing is tried, but the patterns themselves don't slow down on long input.
+        String lettersAndSpaces = "ab ".repeat(30_000) + "c";
+        String spaces = "1" + " ".repeat(60_000) + "Bolt (";
+        assertTimeoutPreemptively(Duration.ofSeconds(1), () -> {
+            assertThat(DeckTextParser.looksLikeHeading(lettersAndSpaces)).isFalse();
+            assertThat(DeckTextParser.looksLikeHeading(lettersAndSpaces + " (")).isFalse();
+            assertThat(DeckTextParser.looksLikeHeading(lettersAndSpaces + " (36)")).isTrue();
+            assertThat(DeckTextParser.withoutSuffix(spaces)).endsWith("Bolt ");
+            assertThat(DeckTextParser.withoutDecoration(" ".repeat(60_000) + "Deck (60)")).isEqualTo("Deck");
+        });
     }
 }

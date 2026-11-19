@@ -63,6 +63,7 @@ import java.util.Set;
 
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.deckAlreadyClaimed;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.deckChangedConcurrently;
+import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.deckTextTooLong;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.importFailed;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.invalidDeckChange;
 import static dm.dracolich.deckBuilder.core.helpers.ErrorUtil.notFound;
@@ -627,6 +628,9 @@ public class DeckServiceImpl implements DeckService {
 
     @Override
     public Mono<ImportCheckDto> checkImport(ImportValidateRequest request) {
+        if (tooLong(request.deckText())) {
+            return Mono.error(deckTextTooLong(DeckTextParser.MAX_TEXT_LENGTH));
+        }
         List<ParsedLine> parsed = DeckTextParser.parse(request.deckText());
         List<ParsedLine> cardLines = parsed.stream().filter(ParsedLine::isValid).toList();
         Mono<List<CardDto>> found = cardLines.isEmpty()
@@ -683,7 +687,15 @@ public class DeckServiceImpl implements DeckService {
 
     private record ResolvedImport(List<DeckCardEntity> commander, List<DeckCardEntity> cards) {}
 
+    /** Text longer than the parser reads is refused before it's read. */
+    private static boolean tooLong(String deckText) {
+        return deckText != null && deckText.length() > DeckTextParser.MAX_TEXT_LENGTH;
+    }
+
     private Mono<ResolvedImport> resolveImport(String deckText) {
+        if (tooLong(deckText)) {
+            return Mono.error(deckTextTooLong(DeckTextParser.MAX_TEXT_LENGTH));
+        }
         List<ParsedLine> parsed = DeckTextParser.parse(deckText);
 
         List<ErrorUtil.ImportFailure> parseFailures = parsed.stream()

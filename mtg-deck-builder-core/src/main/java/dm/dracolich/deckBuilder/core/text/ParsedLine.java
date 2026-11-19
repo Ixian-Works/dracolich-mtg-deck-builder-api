@@ -57,6 +57,7 @@ public record ParsedLine(
             case COUNT_NOT_VALID -> "Count must be a whole number from 1";
             case NO_SUCH_CARD -> "Card '" + cardName + "' not found in library";
             case UNKNOWN_HEADING -> "Heading names no board";
+            case LINE_TOO_LONG -> "Line is longer than " + DeckTextParser.MAX_LINE_LENGTH + " characters";
         };
     }
 

@@ -43,6 +43,12 @@ public final class ErrorUtil {
                 List.of(error), HttpStatus.CONFLICT);
     }
 
+    public static ResponseException deckTextTooLong(int limit) {
+        var error = new ApiError(ErrorCodes.DMD050);
+        return new ResponseException(ErrorCodes.DMD050.format(String.format(java.util.Locale.ROOT, "%,d", limit)),
+                List.of(error), HttpStatus.BAD_REQUEST);
+    }
+
     public static ResponseException deckAlreadyClaimed(String deckId) {
         var error = new ApiError(ErrorCodes.DMD036);
         return new ResponseException(ErrorCodes.DMD036.format(deckId),

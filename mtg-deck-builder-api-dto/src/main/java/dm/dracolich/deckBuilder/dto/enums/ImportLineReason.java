@@ -15,5 +15,7 @@ public enum ImportLineReason {
      * A heading that names no board, such as "Companion", "About", "Name My deck" or "Lands (36)".
      * It changes nothing: later cards stay on the board they were on.
      */
-    UNKNOWN_HEADING
+    UNKNOWN_HEADING,
+    /** Longer than 200 characters, so not read at all. */
+    LINE_TOO_LONG
 }

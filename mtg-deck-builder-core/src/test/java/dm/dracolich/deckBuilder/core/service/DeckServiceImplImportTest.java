@@ -1,6 +1,7 @@
 package dm.dracolich.deckBuilder.core.service;
 
 import dm.dracolich.deckBuilder.core.mapper.DeckMapper;
+import dm.dracolich.deckBuilder.core.text.DeckTextParser;
 import dm.dracolich.deckBuilder.core.validation.FormatRuleSetRegistry;
 import dm.dracolich.deckBuilder.data.repository.DeckRepository;
 import dm.dracolich.deckBuilder.data.repository.FavoriteRepository;
@@ -153,6 +154,36 @@ class DeckServiceImplImportTest {
 
         StepVerifier.create(service.validateImportedDeck(new ImportValidateRequest(Format.MODERN, "About\nName Burn\nDeck\n4 Lightning Bolt")))
                 .assertNext(analysis -> assertThat(analysis.stats().cardCount()).isEqualTo(4))
+                .verifyComplete();
+    }
+
+    @Test
+    void textOverTheLimitIsRefusedBeforeItIsRead() {
+        String tooLong = "1 Lightning Bolt\n".repeat(DeckTextParser.MAX_TEXT_LENGTH / 17 + 1);
+
+        for (var call : List.of(
+                service.checkImport(new ImportValidateRequest(Format.MODERN, tooLong)),
+                service.validateImportedDeck(new ImportValidateRequest(Format.MODERN, tooLong)))) {
+            StepVerifier.create(call)
+                    .expectErrorSatisfies(e -> {
+                        assertThat(e).isInstanceOf(ResponseException.class);
+                        assertThat(((ResponseException) e).getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                        assertThat(((ResponseException) e).getErrors()).extracting("error").containsExactly("DMD050");
+                    })
+                    .verify();
+        }
+        verify(library, never()).resolveCards(anyList());
+    }
+
+    @Test
+    void textAtTheLimitIsRead() {
+        libraryKnowsAllBut(Set.of());
+        String line = "1 Lightning Bolt\n";
+        String atLimit = line.repeat(DeckTextParser.MAX_TEXT_LENGTH / line.length());
+        assertThat(atLimit.length()).isLessThanOrEqualTo(DeckTextParser.MAX_TEXT_LENGTH);
+
+        StepVerifier.create(service.checkImport(new ImportValidateRequest(Format.MODERN, atLimit)))
+                .assertNext(check -> assertThat(check.lines()).isNotEmpty())
                 .verifyComplete();
     }
 }
