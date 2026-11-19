@@ -263,9 +263,12 @@ public class DeckServiceImpl implements DeckService {
         }
         Instant now = Instant.now();
 
+        // Whoever may read the deck may copy it: its owner whatever its visibility, anyone
+        // else only a public one, the same rule as GET /decks/{id}. The copy starts with
+        // no AI session and no AI cache, so the two decks never share a conversation.
         return repo.findById(id)
                 .switchIfEmpty(Mono.error(notFound("copy_deck", "deck", id)))
-                .filter(deck -> deck.getVisibility().equals(Visibility.PUBLIC))
+                .filter(deck -> canAccess(deck, principal))
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .map(source -> DeckEntity.builder()
                         .copiedFromId(source.getId())
@@ -274,19 +277,28 @@ public class DeckServiceImpl implements DeckService {
                                 .createdAt(now)
                                 .lastModified(now)
                                 .build())
-                        .name(source.getName())
+                        .name(copyName(source.getName()))
                         .description(source.getDescription())
                         .format(source.getFormat())
                         .status(source.getStatus())
-                        .commander(source.getCommander())
-                        .cards(source.getCards())
+                        .commander(copyOf(source.getCommander()))
+                        .cards(copyOf(source.getCards()))
                         .visibility(Visibility.PRIVATE)
                         .favoritesCount(0L)
                     .build())
                 .doOnNext(DeckCards::refreshColors);
     }
 
-    private Mono<DeckEntity> buildFetchDeckByIdAndUserId(Principal principal, String id) {
+/** The copy's name says it is one, so it never sits beside the original under the same name. */
+    static String copyName(String name) {
+        return (name == null || name.isBlank() ? "Deck" : name) + " (copy)";
+    }
+
+    private static List<DeckCardEntity> copyOf(List<DeckCardEntity> cards) {
+        return cards == null ? new ArrayList<>() : new ArrayList<>(cards);
+    }
+
+        private Mono<DeckEntity> buildFetchDeckByIdAndUserId(Principal principal, String id) {
         return repo.findById(id)
                 .switchIfEmpty(Mono.error(notFound("fetch_deck_by_id", "id", id)))
                 .filter(deck -> canAccess(deck, principal))

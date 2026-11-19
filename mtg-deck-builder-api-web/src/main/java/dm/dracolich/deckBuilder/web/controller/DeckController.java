@@ -136,15 +136,15 @@ public class DeckController {
         return service.claimDeck(id, cookieAnonId);
     }
 
-    @Operation(summary = "Copy deck", description = "Copy existing deck to user's account")
+    @Operation(summary = "Copy deck", description = "Copy a deck into the caller's account: one's own deck whatever its visibility, anyone else's only if public. The copy is private, named \"<name> (copy)\", keeps copied_from_id, and has no AI session or cache. Guests are refused.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Deck copied successfully",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
             @ApiResponse(responseCode = "400", description = "Validation error",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
-            @ApiResponse(responseCode = "401", description = "Unauthorized",
+            @ApiResponse(responseCode = "401", description = "Not signed in, a guest, or a deck the caller can't read",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
-            @ApiResponse(responseCode = "404", description = "Card not found",
+            @ApiResponse(responseCode = "404", description = "Deck not found",
                     content = @Content(schema = @Schema(implementation = DeckDto.class))),
             @ApiResponse(responseCode = "503", description = "Internal server error",
                     content = @Content(schema = @Schema(implementation = DeckDto.class)))
