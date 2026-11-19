@@ -1,6 +1,7 @@
 package dm.dracolich.deckBuilder.core.service;
 
 import dm.dracolich.deckBuilder.core.mapper.DeckMapper;
+import dm.dracolich.deckBuilder.core.text.DeckTextParser;
 import dm.dracolich.deckBuilder.core.validation.FormatRuleSetRegistry;
 import dm.dracolich.deckBuilder.data.repository.DeckRepository;
 import dm.dracolich.deckBuilder.data.repository.FavoriteRepository;
@@ -97,5 +98,92 @@ class DeckServiceImplImportTest {
                             "line 5: '1 Third Fake' — Card 'Third Fake' not found in library");
                 })
                 .verify();
+    }
+
+    @Test
+    void theCheckNamesAnUnknownCardAndAnUnreadableLineAndMatchesEveryOtherLine() {
+        libraryKnowsAllBut(Set.of("Not A Card"));
+        String text = """
+                Commander
+                1 Krenko, Mob Boss
+                Deck
+                4x Goblin Lackey
+                1 Not A Card
+                4 ***
+                Companion
+                Mountain
+                SB: 2 Pyroblast
+                """;
+
+        StepVerifier.create(service.checkImport(new ImportValidateRequest(Format.COMMANDER, text)))
+                .assertNext(check -> {
+                    assertThat(check.lines()).extracting(l -> l.lineNumber() + " " + l.kind() + " " + l.board() + " "
+                                    + l.count() + " " + l.cardName() + " " + l.reason())
+                            .containsExactly(
+                                    "1 HEADING COMMANDER null null null",
+                                    "2 CARD COMMANDER 1 Krenko, Mob Boss null",
+                                    "3 HEADING MAINBOARD null null null",
+                                    "4 CARD MAINBOARD 4 Goblin Lackey null",
+                                    "5 UNREAD MAINBOARD 1 null NO_SUCH_CARD",
+                                    "6 UNREAD null null null NOT_A_CARD_LINE",
+                                    "7 UNREAD null null null UNKNOWN_HEADING",
+                                    "8 CARD MAINBOARD 1 Mountain null",
+                                    "9 CARD SIDEBOARD 2 Pyroblast null");
+                    assertThat(check.lines().get(4).nameAsRead()).isEqualTo("Not A Card");
+                    assertThat(check.lines().get(1).cardId()).isEqualTo("krenko, mob boss");
+                    assertThat(check.lines().get(5).text()).isEqualTo("4 ***");
+                    // The rules and statistics come from the matched lines and inform without refusing.
+                    // Every matched card counts: the commander, 4 Lackeys, the Mountain and 2 Pyroblasts.
+                    assertThat(check.stats().cardCount()).isEqualTo(8);
+                    assertThat(check.validation().valid()).isFalse();
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void theCheckOfAnEmptyListIsNoLinesNotARefusal() {
+        StepVerifier.create(service.checkImport(new ImportValidateRequest(Format.MODERN, "\n\n")))
+                .assertNext(check -> assertThat(check.lines()).isEmpty())
+                .verifyComplete();
+        verify(library, never()).resolveCards(anyList());
+    }
+
+    @Test
+    void theStrictImportSkipsAHeadingThatNamesNoBoard() {
+        libraryKnowsAllBut(Set.of());
+
+        StepVerifier.create(service.validateImportedDeck(new ImportValidateRequest(Format.MODERN, "About\nName Burn\nDeck\n4 Lightning Bolt")))
+                .assertNext(analysis -> assertThat(analysis.stats().cardCount()).isEqualTo(4))
+                .verifyComplete();
+    }
+
+    @Test
+    void textOverTheLimitIsRefusedBeforeItIsRead() {
+        String tooLong = "1 Lightning Bolt\n".repeat(DeckTextParser.MAX_TEXT_LENGTH / 17 + 1);
+
+        for (var call : List.of(
+                service.checkImport(new ImportValidateRequest(Format.MODERN, tooLong)),
+                service.validateImportedDeck(new ImportValidateRequest(Format.MODERN, tooLong)))) {
+            StepVerifier.create(call)
+                    .expectErrorSatisfies(e -> {
+                        assertThat(e).isInstanceOf(ResponseException.class);
+                        assertThat(((ResponseException) e).getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                        assertThat(((ResponseException) e).getErrors()).extracting("error").containsExactly("DMD050");
+                    })
+                    .verify();
+        }
+        verify(library, never()).resolveCards(anyList());
+    }
+
+    @Test
+    void textAtTheLimitIsRead() {
+        libraryKnowsAllBut(Set.of());
+        String line = "1 Lightning Bolt\n";
+        String atLimit = line.repeat(DeckTextParser.MAX_TEXT_LENGTH / line.length());
+        assertThat(atLimit.length()).isLessThanOrEqualTo(DeckTextParser.MAX_TEXT_LENGTH);
+
+        StepVerifier.create(service.checkImport(new ImportValidateRequest(Format.MODERN, atLimit)))
+                .assertNext(check -> assertThat(check.lines()).isNotEmpty())
+                .verifyComplete();
     }
 }
