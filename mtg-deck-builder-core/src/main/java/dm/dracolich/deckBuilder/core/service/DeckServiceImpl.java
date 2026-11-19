@@ -12,7 +12,6 @@ import dm.dracolich.deckBuilder.core.validation.FormatRuleSetRegistry;
 import dm.dracolich.deckBuilder.data.entity.AuditEntity;
 import dm.dracolich.deckBuilder.data.entity.DeckCardEntity;
 import dm.dracolich.deckBuilder.data.entity.DeckEntity;
-import dm.dracolich.deckBuilder.data.entity.FavoriteEntity;
 import dm.dracolich.deckBuilder.data.repository.DeckRepository;
 import dm.dracolich.deckBuilder.data.repository.FavoriteRepository;
 import dm.dracolich.deckBuilder.dto.CardRequest;
@@ -164,10 +163,11 @@ public class DeckServiceImpl implements DeckService {
 
     @Override
     public Mono<Page<DeckDto>> listPublicUserFavorites(String userId, int page, int size) {
-        return favoriteRepo.findByUserId(userId)
-                .map(FavoriteEntity::getDeckIds)
-                .defaultIfEmpty(Set.of())
-                .flatMap(deckIds -> repo.findPublicDecksByIds(deckIds, page, size))
+        // Newest favorite first. Favorites of decks that were deleted or stopped being public are
+        // skipped and not counted.
+        return favoriteRepo.deckIdsNewestFirst(userId, FavoriteService.FAVORITE_IDS_LIMIT)
+                .collectList()
+                .flatMap(deckIds -> repo.findPublicDecksInOrder(deckIds, page, size))
                 .map(p -> p.map(mapper::toDto));
     }
 
@@ -426,7 +426,7 @@ public class DeckServiceImpl implements DeckService {
      * Deletes the deck if the signed-in user owns it. Anonymous decks can't be deleted.
      *
      * <p>References to the deck are left in place and drop out on read: favorites are
-     * read through {@code findPublicDecksByIds}, which skips ids that no longer exist,
+     * read through {@code findPublicDecksInOrder}, which skips ids that no longer exist,
      * and the deck's ai-api session is left to that service.</p>
      */
     private Mono<Boolean> buildDeleteDeckEntity(Principal principal, String id) {

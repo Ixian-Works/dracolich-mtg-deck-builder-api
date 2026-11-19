@@ -85,15 +85,16 @@ Base path: `/dracolich/mtg-deck-builder/api/v0/`
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `?deck_id=` | YES | Favorite a deck. Atomically increments `favoritesCount`. |
-| DELETE | `?deck_id=` | YES | Unfavorite. Decrements `favoritesCount` (clamped at 0). |
+| POST | `?deck_id=` | YES | Favorite someone else's public deck. Your own deck is refused (400, DMD049); a deck that isn't public is refused (401). Favoriting twice is one favorite. Increments `favoritesCount` only when a favorite was made. |
+| DELETE | `?deck_id=` | YES | Unfavorite, even a deck since deleted or made non-public. Decrements `favoritesCount` (clamped at 0) only when a favorite was removed. |
+| GET | `/ids` | YES | The caller's favorite deck ids, newest favorite first, all in one answer (at most 5,000), for drawing every star without paging through decks. |
 
 ### User profile (`/users`)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/{userId}/decks` | NO | Public-only listing of a user's decks. Optional `format` filter, paginated, sorted by `audit.last_modified` DESC. |
-| GET | `/{userId}/favorites` | NO | Public-only listing of decks the user has favorited. Empty `deckIds` short-circuits to empty page. |
+| GET | `/{userId}/favorites` | NO | Public-only listing of decks the user has favorited, **newest favorite first**. Favorites of decks deleted or no longer public are skipped and not counted. |
 
 Path is `userId` rather than `username` for now — frontend already has userId from JWT claims. Username support is a thin add-on (would need a `GET /users/by-username/{username}` on user-api + a `DracolichUserClient` here).
 
@@ -173,13 +174,26 @@ imageUri (Map<String,String> — Scryfall sizes), artist, count, cardCategory
 
 Display data is denormalized for fast deck reads. Card identity stays referential via `cardId`. The `(cardId, cardCategory)` pair is the unique key when targeting a specific copy via PUT/DELETE — same `cardId` can appear with different `cardCategory` values across MAINBOARD / SIDEBOARD / MAYBE_BOARD.
 
-### `FavoriteEntity` (MongoDB collection: `favorites`)
+### `FavoriteEntity` (MongoDB collection: `deck_favorites`)
 
 ```
-id, userId, deckIds (Set<String>)
+id, userId (user_id), deckId (deck_id), favoritedAt (favorited_at)
 ```
 
-One document per user; favorited deck IDs in a set. Deck-side `favoritesCount` is the denormalized counter for popular-deck queries.
+One document per favorite, since Ixian-Works/dracolich-mtg-deck-builder-api#32. A document rather than
+an entry in a per-player list because:
+
+- a unique index on (`user_id`, `deck_id`) makes favoriting twice one favorite, even when two requests race;
+- an index on (`user_id`, `favorited_at`) lists a player's favorites newest first;
+- an index on (`deck_id`, `favorited_at`) lets favorites be counted by period, as popular-this-week
+  (Ixian-Works/dracolich-mtg-deck-builder-api#31) needs, with a plain aggregation.
+
+`FavoriteStoreMigration` creates the three indexes at startup. It also moves anything left in the old
+`favorites` collection, one document per player with a `deckIds` set. Those favorites get the
+migration's time, so they sort together after anything newer. Favorites of one's own deck are
+dropped, and every deck it touched gets `favorites_count` set to its number of favorites. It can be
+interrupted and run again. Deck-side `favoritesCount` is the denormalized counter for popular-deck
+queries.
 
 ### `AiCacheEntity` (embedded on `DeckEntity`)
 
@@ -264,7 +278,8 @@ Hand-rolled `ReactiveMongoTemplate` queries that go beyond `ReactiveMongoReposit
 | `findPopularPublicDecks(format, page, size)` | `GET /decks/popular` |
 | `findLatestPublicDecks(format, page, size)` | `GET /decks/latest` |
 | `findPublicDecksByUserId(userId, format, page, size)` | `GET /users/{userId}/decks` |
-| `findPublicDecksByIds(deckIds, page, size)` | `GET /users/{userId}/favorites` (empty deckIds → empty page short-circuit) |
+| `findPublicDecksByIds(deckIds, page, size)` | Public decks among a set of ids, newest change first |
+| `findPublicDecksInOrder(orderedIds, page, size)` | `GET /users/{userId}/favorites`: the public decks among the ids, in the given order (newest favorite first), skipping the rest |
 
 Shared `paginated(criteria, page, size, sort)` helper does the count + find + `PageImpl` assembly.
 
@@ -281,6 +296,7 @@ Shared `paginated(criteria, page, size, sort)` helper does the count + find + `P
 | DMD036 | Deck already claimed (returns 409) |
 | DMD044 | Invalid deck change, such as a count below 1 or more than two commanders (returns 400) |
 | DMD048 | The deck was changed by other requests three times in a row during an edit (returns 409) |
+| DMD049 | Favoriting one's own deck (returns 400) |
 | DMD040 | ai-api rejected the request (422 and 429 pass through; any other 4xx returns 502) |
 | DMD041 | ai-api unavailable (returns 503) |
 | DMD042 | The deck has no cards to send to the AI (returns 422) |

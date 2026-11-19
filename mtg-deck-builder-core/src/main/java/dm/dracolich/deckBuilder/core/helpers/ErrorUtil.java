@@ -43,6 +43,12 @@ public final class ErrorUtil {
                 List.of(error), HttpStatus.CONFLICT);
     }
 
+    public static ResponseException ownDeckFavorite(String deckId) {
+        var error = new ApiError(ErrorCodes.DMD049);
+        return new ResponseException(ErrorCodes.DMD049.format(deckId),
+                List.of(error), HttpStatus.BAD_REQUEST);
+    }
+
     public static ResponseException deckAlreadyClaimed(String deckId) {
         var error = new ApiError(ErrorCodes.DMD036);
         return new ResponseException(ErrorCodes.DMD036.format(deckId),
