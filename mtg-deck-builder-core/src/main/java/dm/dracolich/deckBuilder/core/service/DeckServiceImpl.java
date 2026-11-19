@@ -15,6 +15,8 @@ import dm.dracolich.deckBuilder.data.entity.DeckEntity;
 import dm.dracolich.deckBuilder.data.entity.FavoriteEntity;
 import dm.dracolich.deckBuilder.data.repository.DeckRepository;
 import dm.dracolich.deckBuilder.data.repository.FavoriteRepository;
+import dm.dracolich.deckBuilder.dto.CardMoveRequest;
+import dm.dracolich.deckBuilder.dto.CardMoveResultDto;
 import dm.dracolich.deckBuilder.dto.CardRequest;
 import dm.dracolich.deckBuilder.dto.CreateDeckRequest;
 import dm.dracolich.deckBuilder.dto.DeckAnalysisDto;
@@ -22,6 +24,7 @@ import dm.dracolich.deckBuilder.dto.DeckDto;
 import dm.dracolich.deckBuilder.dto.DeckStatsDto;
 import dm.dracolich.deckBuilder.dto.DeckValidationDto;
 import dm.dracolich.deckBuilder.dto.ImportDeckRequest;
+import dm.dracolich.deckBuilder.dto.MakeCommanderRequest;
 import dm.dracolich.deckBuilder.dto.ImportValidateRequest;
 import dm.dracolich.deckBuilder.dto.UpdateCardRequest;
 import dm.dracolich.deckBuilder.dto.UpdateDeckRequest;
@@ -141,6 +144,55 @@ public class DeckServiceImpl implements DeckService {
         return ReactiveSecurityContextUtil.getPrincipal()
                 .switchIfEmpty(Mono.error(unauthorized()))
                 .flatMap(principal -> buildUpdateCardInDeck(principal, id, cardId, category, request))
+                .flatMap(repo::save)
+                .transform(retryOnConflict(id))
+                .map(mapper::toDto);
+    }
+
+    /**
+     * Several moves between boards in one versioned write. They are applied in order to the deck as
+     * loaded, and the deck is saved only when every one succeeded, so a failure leaves it as it was.
+     * The colours are recomputed once, at the end.
+     */
+    @Override
+    public Mono<CardMoveResultDto> moveCards(String id, CardMoveRequest request) {
+        return ReactiveSecurityContextUtil.getPrincipal()
+                .switchIfEmpty(Mono.error(unauthorized()))
+                .flatMap(principal -> loadOwnedDeckOrFail(id, principal, "move_cards_in_deck"))
+                .map(deck -> {
+                    List<CardMoveRequest.Move> merges = new ArrayList<>();
+                    for (CardMoveRequest.Move move : request.moves()) {
+                        CardCategory from = move.from() != null ? move.from() : CardCategory.MAINBOARD;
+                        if (DeckCards.move(deck, move.cardId(), from, move.to(), move.count())) {
+                            merges.add(move);
+                        }
+                    }
+                    touchLastModified(deck);
+                    return new MovedDeck(deck, merges);
+                })
+                .flatMap(moved -> repo.save(moved.deck()).map(saved -> new MovedDeck(saved, moved.merges())))
+                .transform(retryOnConflict(id))
+                .map(moved -> new CardMoveResultDto(mapper.toDto(moved.deck()), moved.merges().stream()
+                        .map(move -> new CardMoveResultDto.Merged(move.cardId(), move.to(),
+                                DeckCards.find(moved.deck(), move.cardId(), move.to())
+                                        .map(DeckCardEntity::getCount).orElse(0)))
+                        .distinct()
+                        .toList()));
+    }
+
+    private record MovedDeck(DeckEntity deck, List<CardMoveRequest.Move> merges) {}
+
+    /** One copy of a card in the deck becomes its commander, or its second commander, in one write. */
+    @Override
+    public Mono<DeckDto> makeCommander(String id, MakeCommanderRequest request) {
+        CardCategory from = request.cardCategory() != null ? request.cardCategory() : CardCategory.MAINBOARD;
+        return ReactiveSecurityContextUtil.getPrincipal()
+                .switchIfEmpty(Mono.error(unauthorized()))
+                .flatMap(principal -> loadOwnedDeckOrFail(id, principal, "make_commander"))
+                .map(deck -> {
+                    DeckCards.makeCommander(deck, request.cardId(), from);
+                    return touchLastModified(deck);
+                })
                 .flatMap(repo::save)
                 .transform(retryOnConflict(id))
                 .map(mapper::toDto);
@@ -478,7 +530,15 @@ public class DeckServiceImpl implements DeckService {
         CardCategory targetCategory = category != null ? category : CardCategory.MAINBOARD;
         return loadOwnedDeckOrFail(id, principal, "update_card_in_deck")
                 .map(deck -> {
-                    DeckCards.update(deck, cardId, targetCategory, request.count(), request.cardCategory());
+                    if (request.moveCount() != null) {
+                        // Some copies move and the rest stay; setting a count at the same time is ambiguous.
+                        if (request.count() != null) {
+                            throw invalidDeckChange("give count or move_count, not both");
+                        }
+                        DeckCards.move(deck, cardId, targetCategory, request.cardCategory(), request.moveCount());
+                    } else {
+                        DeckCards.update(deck, cardId, targetCategory, request.count(), request.cardCategory());
+                    }
                     return touchLastModified(deck);
                 });
     }

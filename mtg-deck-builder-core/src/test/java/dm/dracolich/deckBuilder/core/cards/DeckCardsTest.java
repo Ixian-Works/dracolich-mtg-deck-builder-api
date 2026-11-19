@@ -189,4 +189,104 @@ class DeckCardsTest {
 
         assertThat(deck.getColors()).containsExactly(Color.R);
     }
+
+    // ---- Moving some copies ----
+
+    private static List<String> entries(DeckEntity deck) {
+        return deck.getCards().stream().map(c -> c.getCount() + " " + c.getCardId() + " " + c.getCardCategory()).toList();
+    }
+
+    @Test
+    void movingSomeCopiesLeavesTheRest() {
+        DeckEntity deck = deck(card("bolt", MAINBOARD, 4));
+
+        boolean merged = DeckCards.move(deck, "bolt", MAINBOARD, SIDEBOARD, 1);
+
+        assertThat(merged).isFalse();
+        assertThat(entries(deck)).containsExactlyInAnyOrder("3 bolt MAINBOARD", "1 bolt SIDEBOARD");
+    }
+
+    @Test
+    void movingCopiesIntoABoardThatHoldsTheCardMerges() {
+        DeckEntity deck = deck(card("bolt", MAINBOARD, 4), card("bolt", SIDEBOARD, 1));
+
+        boolean merged = DeckCards.move(deck, "bolt", MAINBOARD, SIDEBOARD, 2);
+
+        assertThat(merged).isTrue();
+        assertThat(entries(deck)).containsExactlyInAnyOrder("2 bolt MAINBOARD", "3 bolt SIDEBOARD");
+    }
+
+    @Test
+    void movingEveryCopyOrNoCountMovesTheWholeEntry() {
+        DeckEntity all = deck(card("bolt", MAINBOARD, 4));
+        DeckCards.move(all, "bolt", MAINBOARD, MAYBE_BOARD, 4);
+        assertThat(entries(all)).containsExactly("4 bolt MAYBE_BOARD");
+
+        DeckEntity whole = deck(card("bolt", MAINBOARD, 4));
+        DeckCards.move(whole, "bolt", MAINBOARD, MAYBE_BOARD, null);
+        assertThat(entries(whole)).containsExactly("4 bolt MAYBE_BOARD");
+    }
+
+    @Test
+    void anImpossibleMoveIsRefusedAndChangesNothing() {
+        DeckEntity deck = deck(card("bolt", MAINBOARD, 4));
+
+        assertRejected(() -> DeckCards.move(deck, "bolt", MAINBOARD, SIDEBOARD, 5), HttpStatus.BAD_REQUEST, "DMD044");
+        assertRejected(() -> DeckCards.move(deck, "bolt", MAINBOARD, MAINBOARD, 1), HttpStatus.BAD_REQUEST, "DMD044");
+        assertRejected(() -> DeckCards.move(deck, "bolt", MAINBOARD, null, 1), HttpStatus.BAD_REQUEST, "DMD044");
+        assertRejected(() -> DeckCards.move(deck, "bolt", MAINBOARD, SIDEBOARD, 0), HttpStatus.BAD_REQUEST, "DMD044");
+        assertRejected(() -> DeckCards.move(deck, "bolt", SIDEBOARD, MAINBOARD, 1), HttpStatus.NOT_FOUND, "DMD033");
+        assertThat(entries(deck)).containsExactly("4 bolt MAINBOARD");
+    }
+
+    // ---- Making a card the commander ----
+
+    @Test
+    void aCardBecomesTheCommanderAndLeavesItsBoard() {
+        DeckEntity deck = deck(card("krenko", MAINBOARD, 1), card("bolt", MAINBOARD, 4));
+
+        DeckCards.makeCommander(deck, "krenko", MAINBOARD);
+
+        assertThat(deck.getCommander()).extracting(DeckCardEntity::getCardId, DeckCardEntity::getCount, DeckCardEntity::getCardCategory)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("krenko", 1, null));
+        assertThat(entries(deck)).containsExactly("4 bolt MAINBOARD");
+    }
+
+    @Test
+    void oneCopyOfSeveralBecomesTheCommanderAndTheRestStay() {
+        DeckEntity deck = deck(card("relentless-rats", MAINBOARD, 3));
+
+        DeckCards.makeCommander(deck, "relentless-rats", MAINBOARD);
+
+        assertThat(deck.getCommander()).extracting(DeckCardEntity::getCardId).containsExactly("relentless-rats");
+        assertThat(entries(deck)).containsExactly("2 relentless-rats MAINBOARD");
+    }
+
+    @Test
+    void aSecondCardBecomesTheSecondCommander() {
+        DeckEntity deck = deck(card("tymna", SIDEBOARD, 1));
+        deck.getCommander().add(card("thrasios", null, 1));
+
+        DeckCards.makeCommander(deck, "tymna", SIDEBOARD);
+
+        assertThat(deck.getCommander()).extracting(DeckCardEntity::getCardId).containsExactly("thrasios", "tymna");
+        assertThat(deck.getCards()).isEmpty();
+    }
+
+    @Test
+    void aThirdCommanderOrTheSameOneTwiceIsRefusedAndChangesNothing() {
+        DeckEntity full = deck(card("kraum", MAINBOARD, 1));
+        full.getCommander().add(card("thrasios", null, 1));
+        full.getCommander().add(card("tymna", null, 1));
+        assertRejected(() -> DeckCards.makeCommander(full, "kraum", MAINBOARD), HttpStatus.BAD_REQUEST, "DMD044");
+        assertThat(entries(full)).containsExactly("1 kraum MAINBOARD");
+
+        DeckEntity twice = deck(card("krenko", MAINBOARD, 1));
+        twice.getCommander().add(card("krenko", null, 1));
+        assertRejected(() -> DeckCards.makeCommander(twice, "krenko", MAINBOARD), HttpStatus.BAD_REQUEST, "DMD044");
+
+        DeckEntity missing = deck(card("bolt", MAINBOARD, 4));
+        assertRejected(() -> DeckCards.makeCommander(missing, "krenko", MAINBOARD), HttpStatus.NOT_FOUND, "DMD033");
+        assertThat(missing.getCommander()).isEmpty();
+    }
 }

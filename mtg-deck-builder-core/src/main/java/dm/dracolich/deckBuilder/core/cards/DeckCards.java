@@ -5,6 +5,7 @@ import dm.dracolich.deckBuilder.data.entity.DeckEntity;
 import dm.dracolich.deckBuilder.dto.enums.CardCategory;
 import dm.dracolich.mtgLibrary.dto.enums.Color;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -80,6 +81,78 @@ public final class DeckCards {
                     existing -> existing.setCount(existing.getCount() + entry.getCount()),
                     () -> deck.getCards().add(entry));
         }
+    }
+
+    /**
+     * Moves {@code copies} copies of the card's entry in {@code from} to {@code to}, merging with an entry
+     * already there; null moves the whole entry. Moving every copy empties the entry in {@code from}.
+     * Returns whether the copies merged into an entry that was already in {@code to}.
+     */
+    public static boolean move(DeckEntity deck, String cardId, CardCategory from, CardCategory to, Integer copies) {
+        if (to == null) {
+            throw invalidDeckChange("give the board to move the card to");
+        }
+        if (to == from) {
+            throw invalidDeckChange("the card is already in " + to);
+        }
+        DeckCardEntity entry = find(deck, cardId, from)
+                .orElseThrow(() -> notFound("move_card_in_deck", "card", cardId));
+        int moving = copies == null ? entry.getCount() : requirePositive(copies, "move_count");
+        if (moving > entry.getCount()) {
+            throw invalidDeckChange("can't move " + moving + " copies of " + cardId + ", the board holds " + entry.getCount());
+        }
+        Optional<DeckCardEntity> there = find(deck, cardId, to);
+        if (moving == entry.getCount()) {
+            deck.getCards().remove(entry);
+        } else {
+            entry.setCount(entry.getCount() - moving);
+        }
+        there.ifPresentOrElse(
+                existing -> existing.setCount(existing.getCount() + moving),
+                () -> deck.getCards().add(copyOf(entry, to, moving)));
+        return there.isPresent();
+    }
+
+    /**
+     * Makes one copy of the card's entry in {@code from} the deck's commander, or its second commander:
+     * the copy leaves the board and joins the command zone. A deck has at most two commanders, and a
+     * card can't be a commander twice.
+     */
+    public static void makeCommander(DeckEntity deck, String cardId, CardCategory from) {
+        if (deck.getCommander() == null) deck.setCommander(new ArrayList<>());
+        if (deck.getCommander().size() >= 2) {
+            throw invalidDeckChange("a deck has at most two commanders");
+        }
+        if (deck.getCommander().stream().anyMatch(c -> cardId.equals(c.getCardId()))) {
+            throw invalidDeckChange(cardId + " is already a commander");
+        }
+        DeckCardEntity entry = find(deck, cardId, from)
+                .orElseThrow(() -> notFound("make_commander", "card", cardId));
+        if (entry.getCount() > 1) {
+            entry.setCount(entry.getCount() - 1);
+        } else {
+            deck.getCards().remove(entry);
+        }
+        List<DeckCardEntity> commanders = new ArrayList<>(deck.getCommander());
+        commanders.add(copyOf(entry, null, 1));
+        deck.setCommander(commanders);
+    }
+
+    /** The entry's snapshot on another board, with its own count. */
+    private static DeckCardEntity copyOf(DeckCardEntity entry, CardCategory board, int count) {
+        return DeckCardEntity.builder()
+                .cardId(entry.getCardId())
+                .name(entry.getName())
+                .manaCost(entry.getManaCost())
+                .cmc(entry.getCmc())
+                .colors(entry.getColors())
+                .colorIdentity(entry.getColorIdentity())
+                .typeLine(entry.getTypeLine())
+                .imageUri(entry.getImageUri())
+                .artist(entry.getArtist())
+                .count(count)
+                .cardCategory(board)
+                .build();
     }
 
     /**
